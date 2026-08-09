@@ -43,6 +43,19 @@
   // Persist session in localStorage — no more re-login every visit
   setPersistence(auth, browserLocalPersistence).catch(()=>{});
 
+  // ── RELOJ DEL SERVIDOR ──
+  // El reloj local del navegador puede estar desincronizado (adelantado o
+  // atrasado). Para validaciones sensibles a la hora (ej. mensajes
+  // programados), no hay que confiar en Date.now() solo — Firebase expone
+  // ".info/serverTimeOffset", la diferencia en ms entre el reloj del
+  // dispositivo y el reloj real del servidor. Con eso armamos nowServer(),
+  // que da la hora real sin importar qué tan desajustado esté el reloj local.
+  window._serverTimeOffset = 0;
+  onValue(ref(db, '.info/serverTimeOffset'), snap => {
+    window._serverTimeOffset = snap.val() || 0;
+  });
+  window.nowServer = () => Date.now() + (window._serverTimeOffset || 0);
+
   window._db  = db;
   window._auth = auth;
   window._fbRef = ref; window._fbSet = set; window._fbPush = push;
@@ -3508,6 +3521,25 @@ function isThreadChannel(channelId){
   }
   return false;
 }
+// ── LIMPIEZA AUTOMÁTICA DE MENSAJES ──
+// Mantiene como máximo MSG_CLEANUP_LIMIT mensajes por canal. Al superarse,
+// borra los más viejos (los de más) tanto localmente como en Firebase, para
+// no acumular historial de más y ayudar a mantener la cuota de descarga bajo
+// control. Los canales protegidos (isProtectedChannel) quedan exentos.
+const MSG_CLEANUP_LIMIT = 150;
+function cleanupChannelMessages(channelId){
+  if(!channelId||channelId.startsWith('dm_'))return; // no tocar DMs acá
+  if(isProtectedChannel(channelId))return;
+  const list=state.messages[channelId];
+  if(!list||list.length<=MSG_CLEANUP_LIMIT)return;
+  const sorted=[...list].sort((a,b)=>(a.ts||0)-(b.ts||0));
+  const excessCount=sorted.length-MSG_CLEANUP_LIMIT;
+  const toDelete=sorted.slice(0,excessCount);
+  const toDeleteIds=new Set(toDelete.map(m=>m.id));
+  state.messages[channelId]=list.filter(m=>!toDeleteIds.has(m.id));
+  toDelete.forEach(m=>{ fbRemove('state/messages/'+channelId+'/'+m.id).catch(()=>{}); });
+  if(state.currentChannelId===channelId)renderMessages();
+}
 function isProtectedChannel(channelId){
   for(const srv of state.servers||[]){
     for(const cat of srv.channels||[]){
@@ -4096,7 +4128,7 @@ function renderChatArea(){
 
   // Pantalla de reglas: si el servidor la exige y el miembro (que no sea el dueño)
   // todavía no la aceptó, se bloquea todo lo demás hasta que la acepte.
-  if(srv&&!isDM&&srv.requireRulesAccept&&srv.ownerId!==state.currentUser.uid){
+  if(srv&&!isDM&&srv.requireRulesAccept&&!isServerOwner(srv,state.currentUser.uid)){
     const member=(srv.members||[]).find(m=>(m.uid||m.id)===state.currentUser.uid);
     if(member&&!member.acceptedRules){
       if(inputArea)inputArea.style.display='none';
@@ -4624,7 +4656,7 @@ function reactionsHtml(msg){
 }
 function hoverBtns(msg,isMe){
   const srv=getServer(state.currentServerId);
-  const _isOwner=srv&&srv.ownerId===state.currentUser?.uid;
+  const _isOwner=srv&&isServerOwner(srv,state.currentUser?.uid);
   const _protected=state.currentChannelId&&isProtectedChannel(state.currentChannelId);
   const canDelete=(isMe||isServerAdmin(srv))&&(!_protected||_isOwner);
   const canPin=isServerAdmin(srv);
@@ -4814,7 +4846,7 @@ function checkCanSendMessage(channelId){
   if(!found)return true;
   const{ch,srv}=found;
   const member=(srv.members||[]).find(m=>(m.uid||m.id)===state.currentUser.uid);
-  if(srv.requireRulesAccept&&srv.ownerId!==state.currentUser.uid&&member&&!member.acceptedRules){
+  if(srv.requireRulesAccept&&!isServerOwner(srv,state.currentUser.uid)&&member&&!member.acceptedRules){
     showToast(t("⚠️ Tienes que aceptar las reglas del servidor antes de escribir"));
     return false;
   }
@@ -4874,6 +4906,7 @@ async function sendMessage(){
   }
   if(!state.messages[state.currentChannelId])state.messages[state.currentChannelId]=[];
   if(!state.messages[state.currentChannelId].find(m=>m.id===msg.id))state.messages[state.currentChannelId].push(msg);
+  if(!isDM)cleanupChannelMessages(state.currentChannelId);
   input.value='';input.style.height='auto';
   cancelPendingImage();
   fbRemove('typing/'+state.currentUser.uid);
@@ -4896,7 +4929,7 @@ async function deleteMsg(id){
   const isDM=ch.startsWith('dm_');
   if(!isDM&&isProtectedChannel(ch)){
     const srv=getServer(state.currentServerId);
-    const isOwner=srv&&srv.ownerId===state.currentUser.uid;
+    const isOwner=srv&&isServerOwner(srv,state.currentUser.uid);
     if(!isOwner){showToast(t("🛡️ Este es un canal protegido — los mensajes no se pueden borrar"));return;}
   }
   if(!(await cmtrConfirm('¿Eliminar este mensaje? Esta acción no se puede deshacer.',{danger:true,okText:'Eliminar'})))return;
@@ -5391,6 +5424,7 @@ async function deleteChannel(chId,srvId){
 // ── SERVERS ──
 function createServer(){
   const name=document.getElementById('new-server-name').value.trim();if(!name){showToast(t("⚠️ Nombre requerido"));return;}
+  if(document.getElementById('new-server-icon-b64').dataset.uploading==='1'){showToast(t("⏳ Espera a que termine de subir la imagen"));return;}
   const iconB64=document.getElementById('new-server-icon-b64').value;
   const iconEmoji=document.getElementById('new-server-icon-emoji').value.trim()||name[0];
   const icon=iconEmoji; // emoji fallback
@@ -5485,7 +5519,7 @@ function renderServerIdWidget(srv){
 }
 async function changeServerId(srv){
   if(!srv)return;
-  if(srv.ownerId!==state.currentUser.uid){showToast(t("⚠️ Solo el dueño del servidor puede cambiar su ID"));return;}
+  if(!isServerOwner(srv,state.currentUser.uid)){showToast(t("⚠️ Solo el dueño del servidor puede cambiar su ID"));return;}
   const usedFree=!!srv.idChangedFree;
   const boosted=getServerBoostTier(srv)>0;
   if(usedFree&&!boosted){showToast(t("🔒 Ya usaste tu cambio gratis — necesitás Server Boost para cambiarlo de nuevo"));return;}
@@ -5618,7 +5652,8 @@ function renderSsMembers(srv){
   const canManage=hasPermission(state.currentUser.uid,'manage_members');
   members.forEach(m=>{
     const uid=m.uid||m.id;
-    const isOwner=srv.ownerId===uid;
+    const isOwner=isServerOwner(srv,uid);
+    const isCoOwner=srv.coOwnerId===uid&&srv.ownerId!==uid;
     const color=getAutoAvatarColor(uid||m.name);
     const hasTimeout=m.timeoutUntil&&m.timeoutUntil>Date.now();
     const row=document.createElement('div');
@@ -5628,11 +5663,12 @@ function renderSsMembers(srv){
         ${m.avatarUrl?`<img src="${m.avatarUrl}" style="width:100%;height:100%;object-fit:cover;">`:(m.name||'?')[0].toUpperCase()}
       </div>
       <div style="flex:1;min-width:0;">
-        <div style="font-size:.875rem;font-weight:600;color:var(--text-0);">${m.nickname?escapeHtml(m.nickname):(m.name||'?')}${isOwner?'<span style="font-size:.6rem;background:rgba(245,158,11,.2);color:var(--yellow);border-radius:4px;padding:1px 5px;margin-left:6px;font-weight:700;">DUEÑO</span>':''}${hasTimeout?'<span style="font-size:.6rem;background:rgba(244,63,94,.15);color:var(--red);border-radius:4px;padding:1px 5px;margin-left:6px;font-weight:700;">TIMEOUT</span>':''}</div>
+        <div style="font-size:.875rem;font-weight:600;color:var(--text-0);">${m.nickname?escapeHtml(m.nickname):(m.name||'?')}${isOwner&&!isCoOwner?'<span style="font-size:.6rem;background:rgba(245,158,11,.2);color:var(--yellow);border-radius:4px;padding:1px 5px;margin-left:6px;font-weight:700;">DUEÑO</span>':''}${isCoOwner?'<span style="font-size:.6rem;background:rgba(245,158,11,.15);color:var(--yellow);border-radius:4px;padding:1px 5px;margin-left:6px;font-weight:700;">CO-DUEÑO</span>':''}${hasTimeout?'<span style="font-size:.6rem;background:rgba(244,63,94,.15);color:var(--red);border-radius:4px;padding:1px 5px;margin-left:6px;font-weight:700;">TIMEOUT</span>':''}</div>
         <div style="font-size:.72rem;color:var(--text-3);">${m.nickname?`@${m.name} · `:''}${(m.roles||[]).slice(0,3).join(', ')||'Sin roles'}</div>
       </div>
       ${isServerAdmin(srv)?`<button class="btn btn-ghost btn-sm" onclick="openNicknameModal('${uid}')" title="Apodo" data-i18n-title="Apodo"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg></button>`:''}
       ${isServerAdmin(srv)?`<button class="btn btn-ghost btn-sm" onclick="manageRoles('${uid}')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7z"/><path d="M5 20h14"/></svg> Roles</button>`:''}
+      ${(srv.ownerId===state.currentUser.uid&&uid!==srv.ownerId)?(isCoOwner?`<button class="btn btn-ghost btn-sm" onclick="removeCoOwner()" title="Quitar co-dueño">Quitar co-dueño</button>`:`<button class="btn btn-ghost btn-sm" onclick="setCoOwner('${uid}')" title="Hacer co-dueño">Hacer co-dueño</button>`):''}
       ${canManage&&!isOwner?`<button class="btn btn-ghost btn-sm" onclick="openTimeoutModal('${uid}')" title="Timeout" data-i18n-title="Timeout"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></button><button class="btn btn-ghost btn-sm" onclick="kickMember('${uid}')" title="Expulsar" data-i18n-title="Expulsar"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="17" y1="8" x2="22" y2="13"/><line x1="22" y1="8" x2="17" y2="13"/></svg></button><button class="btn btn-danger btn-sm" onclick="banMember('${uid}')" title="Banear" data-i18n-title="Banear"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></button>`:''}`
     el.appendChild(row);
   });
@@ -5738,6 +5774,7 @@ function saveServerSettings(){
   srv.desc=document.getElementById('ss-server-desc').value.trim();
   const newIcon=document.getElementById('ss-server-icon').value.trim();
   if(newIcon)srv.icon=newIcon;
+  if(document.getElementById('ss-server-icon-b64').dataset.uploading==='1'){showToast(t("⏳ Espera a que termine de subir la imagen"));return;}
   const newIconB64=document.getElementById('ss-server-icon-b64').value;
   if(newIconB64)srv.iconImg=newIconB64;
   const newBannerB64=document.getElementById('ss-banner-b64').value;
@@ -5754,9 +5791,38 @@ async function deleteCurrentServer(){
   saveServers();state.currentServerId='__dm__';state.currentChannelId=null;closeModal('server-settings-modal');renderAll();showToast(t("<svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"3 6 5 6 21 6\"/><path d=\"M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6\"/><path d=\"M10 11v6\"/><path d=\"M14 11v6\"/><path d=\"M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2\"/></svg> Servidor eliminado"));
 }
 function saveServers(){fbSet('state/servers',state.servers);}
+// ── CO-DUEÑOS DE SERVIDOR ──
+// Un servidor tiene un ownerId (el dueño original, no se puede quitar) y
+// opcionalmente un coOwnerId (una segunda persona con los mismos poderes
+// de dueño). isServerOwner() trata a ambos igual para todo lo que antes
+// solo chequeaba srv.ownerId — así el co-dueño puede administrar, no puede
+// ser expulsado/baneado/timeout, etc., igual que el dueño original.
+function isServerOwner(srv, uid){
+  if(!srv||!uid)return false;
+  return srv.ownerId===uid || srv.coOwnerId===uid;
+}
+// Solo el dueño ORIGINAL (no el co-dueño) puede nombrar/quitar co-dueño —
+// así el co-dueño no puede nombrar a un tercero ni sacarse a sí mismo.
+function setCoOwner(uid){
+  const srv=getServer(state.currentServerId);if(!srv)return;
+  if(srv.ownerId!==state.currentUser.uid){showToast(t("⚠️ Solo el dueño original puede asignar un co-dueño"));return;}
+  if(uid===srv.ownerId){showToast(t("⚠️ Esa persona ya es el dueño"));return;}
+  srv.coOwnerId=uid;
+  saveServers();
+  showToast(t("✅ Co-dueño asignado"));
+  renderSsMembers(srv);
+}
+function removeCoOwner(){
+  const srv=getServer(state.currentServerId);if(!srv)return;
+  if(srv.ownerId!==state.currentUser.uid){showToast(t("⚠️ Solo el dueño original puede quitar al co-dueño"));return;}
+  srv.coOwnerId=null;
+  saveServers();
+  showToast(t("✅ Co-dueño quitado"));
+  renderSsMembers(srv);
+}
 function isServerAdmin(srv){
   if(!srv||!state.currentUser)return false;
-  if(srv.ownerId===state.currentUser.uid)return true;
+  if(isServerOwner(srv,state.currentUser.uid))return true;
   const m=(srv.members||[]).find(m=>(m.uid||m.id)===state.currentUser.uid);
   return m?.roles?.includes('Admin')||false;
 }
@@ -5886,7 +5952,7 @@ function getDefaultPerms(isAdmin){
 
 function hasPermission(uid, perm){
   const srv=getServer(state.currentServerId);if(!srv)return false;
-  if(srv.ownerId===uid)return true; // owner has all
+  if(isServerOwner(srv,uid))return true; // owner/co-owner has all
   const member=(srv.members||[]).find(m=>(m.uid||m.id)===uid);if(!member)return false;
   const memberRoles=member.roles||[];
   return (srv.roles||[]).some(r=>{
@@ -5898,7 +5964,7 @@ function isUserBanned(srv,uid){return (srv.bannedUsers||[]).some(b=>(b.uid||b)==
 const TIMEOUT_ICON_SVG='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>';
 function openTimeoutModal(uid){
   const srv=getServer(state.currentServerId);if(!srv)return;
-  if(uid===srv.ownerId){showToast(t("⚠️ No puedes aplicar timeout al propietario del servidor"));return;}
+  if(isServerOwner(srv,uid)){showToast(t("⚠️ No puedes aplicar timeout al propietario del servidor"));return;}
   if(!hasPermission(state.currentUser.uid,'manage_members')){showToast(t("⚠️ No tienes permiso para aplicar timeout"));return;}
   const member=(srv.members||[]).find(m=>(m.uid||m.id)===uid);
   state._timeoutTargetUid=uid;
@@ -5927,7 +5993,7 @@ function applyTimeoutDuration(minutes){
 }
 async function kickMember(uid){
   const srv=getServer(state.currentServerId);if(!srv)return;
-  if(uid===srv.ownerId){showToast(t("⚠️ No puedes expulsar al propietario del servidor"));return;}
+  if(isServerOwner(srv,uid)){showToast(t("⚠️ No puedes expulsar al propietario del servidor"));return;}
   if(!hasPermission(state.currentUser.uid,'manage_members')){showToast(t("⚠️ No tienes permiso para expulsar miembros"));return;}
   const member=(srv.members||[]).find(m=>(m.uid||m.id)===uid);
   if(!(await cmtrConfirm(`¿Expulsar a ${member?.name||'este usuario'} del servidor? Podrá volver a unirse con una invitación.`,{danger:true,okText:'Expulsar'})))return;
@@ -5940,7 +6006,7 @@ async function kickMember(uid){
 }
 async function banMember(uid){
   const srv=getServer(state.currentServerId);if(!srv)return;
-  if(uid===srv.ownerId){showToast(t("⚠️ No puedes banear al propietario del servidor"));return;}
+  if(isServerOwner(srv,uid)){showToast(t("⚠️ No puedes banear al propietario del servidor"));return;}
   if(!hasPermission(state.currentUser.uid,'manage_members')){showToast(t("⚠️ No tienes permiso para banear miembros"));return;}
   const member=(srv.members||[]).find(m=>(m.uid||m.id)===uid);
   if(!(await cmtrConfirm(`¿Banear a ${member?.name||'este usuario'}? No podrá volver a unirse con ningún enlace de invitación hasta que lo desbanees.`,{danger:true,okText:'Banear'})))return;
@@ -6297,7 +6363,7 @@ function openLeaderboard(){
 }
 
 // ── CUSTOM EMOJIS ──
-function addCustomEmoji(){
+async function addCustomEmoji(){
   const name=document.getElementById('ce-name').value.trim().toLowerCase().replace(/\s+/g,'_');
   const b64=document.getElementById('ce-b64').value;
   if(!name){showToast(t("⚠️ Nombre requerido"));return;}
@@ -6315,7 +6381,10 @@ function addCustomEmoji(){
     const [type,id]=restrictVal.split(':');
     restrict={type,id};
   }
-  srv.customEmojis.push({name,url:b64,uploadedBy:state.currentUser?.name||'?',uploadedAt:Date.now(),restrict});
+  showToast(t("⏳ Subiendo emoji..."));
+  const url=await uploadToSupabaseStorage(b64,'emojis');
+  if(!url){showToast(t("⚠️ No se pudo subir el emoji (revisa la configuración de Supabase Storage)"));return;}
+  srv.customEmojis.push({name,url,uploadedBy:state.currentUser?.name||'?',uploadedAt:Date.now(),restrict});
   saveServers();
   document.getElementById('ce-name').value='';
   document.getElementById('ce-b64').value='';
@@ -6456,7 +6525,7 @@ function saveEditedEmoji(idx){
 }
 
 // ── CUSTOM STICKERS (server) ──
-function addCustomSticker(){
+async function addCustomSticker(){
   const name=document.getElementById('cs-name').value.trim();
   const b64=document.getElementById('cs-b64').value;
   if(!name){showToast(t("Nombre requerido"));return;}
@@ -6465,7 +6534,10 @@ function addCustomSticker(){
   if(!srv.customStickers)srv.customStickers=[];
   const _stickerCap=boostCapFor(srv,'sticker');
   if(srv.customStickers.length>=_stickerCap){showToast(currentLang==='en'?`Maximum ${_stickerCap} stickers per server`+(getServerBoostTier(srv)<3?' — a Server Boost raises the cap':''):`Máximo ${_stickerCap} stickers por servidor`+(getServerBoostTier(srv)<3?' — un Server Boost sube el tope':''));return;}
-  srv.customStickers.push({name,url:b64,uploadedBy:state.currentUser?.name||'?',uploadedAt:Date.now()});
+  showToast(t("⏳ Subiendo sticker..."));
+  const url=await uploadToSupabaseStorage(b64,'stickers');
+  if(!url){showToast(t("⚠️ No se pudo subir el sticker (revisa la configuración de Supabase Storage)"));return;}
+  srv.customStickers.push({name,url,uploadedBy:state.currentUser?.name||'?',uploadedAt:Date.now()});
   saveServers();
   document.getElementById('cs-name').value='';
   document.getElementById('cs-b64').value='';
@@ -6931,7 +7003,7 @@ function renderProfilePopupContent(u,uid,loading){
     } else {
       friendBtn=`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;" onclick="sendFriendRequestFromProfile('${uid}',this)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg> Añadir</button>`;
     }
-    const canManage=srv&&uid!==srv.ownerId&&hasPermission(state.currentUser.uid,'manage_members');
+    const canManage=srv&&!isServerOwner(srv,uid)&&hasPermission(state.currentUser.uid,'manage_members');
     const nickBtn=(srv&&state.currentServerId!=='__dm__'&&isServerAdmin(srv))?`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;" onclick="openNicknameModal('${uid}')" title="Apodo" data-i18n-title="Apodo"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg></button>`:'';
     const modBtns=canManage?`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;" onclick="openTimeoutModal('${uid}')" title="Timeout" data-i18n-title="Timeout"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Timeout</button><button class="btn btn-ghost" style="font-size:.8rem;padding:7px;" onclick="kickMember('${uid}')" title="Expulsar" data-i18n-title="Expulsar"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="17" y1="8" x2="22" y2="13"/><line x1="22" y1="8" x2="17" y2="13"/></svg> Expulsar</button><button class="btn btn-danger" style="font-size:.8rem;padding:7px;" onclick="banMember('${uid}')" title="Banear" data-i18n-title="Banear"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg> Banear</button>`:'';
     actEl.innerHTML=`<button class="btn btn-primary" style="font-size:.8rem;padding:7px;" onclick="openDM('${uid}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> Mensaje</button>${friendBtn}${isServerAdmin(srv)?`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;" onclick="manageRoles('${uid}')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7z"/><path d="M5 20h14"/></svg> Roles</button>`:''}${nickBtn}${modBtns}`;
@@ -7494,6 +7566,10 @@ function saveUserSettings(){
     showPresence:document.getElementById('us-show-presence').classList.contains('on'),
   };
   // Use uploaded image if available, otherwise keep existing
+  if(document.getElementById('us-avatar-b64').dataset.uploading==='1' || document.getElementById('us-banner-b64').dataset.uploading==='1'){
+    showToast(t("⏳ Espera a que termine de subir la imagen"));
+    return;
+  }
   const newAvatarB64=document.getElementById('us-avatar-b64').value;
   const newBannerB64=document.getElementById('us-banner-b64').value;
   const avatarUrl=newAvatarB64||state.currentUser.avatarUrl||'';
@@ -8465,23 +8541,41 @@ function handleImgUpload(input, previewId, hiddenId, maxW, maxH) {
     el.style.backgroundSize = 'cover';
     el.style.backgroundPosition = 'center';
     el.textContent = '';
-    document.getElementById(hiddenId).value = b64;
+    document.getElementById(hiddenId).value = '';
+    document.getElementById(hiddenId).dataset.uploading = '1';
+    uploadToSupabaseStorage(b64, 'avatars-banners').then(url=>{
+      document.getElementById(hiddenId).dataset.uploading = '';
+      if(url){
+        document.getElementById(hiddenId).value = url;
+      } else {
+        showToast(t("⚠️ No se pudo subir la imagen (revisa la configuración de Supabase Storage)"));
+      }
+    });
     if (previewId === 'us-banner-preview') resetBannerPosition();
   });
 }
 function handleServerIconUpload(input, previewId, hiddenId) {
   const file = input.files[0]; if (!file) return;
   if (file.size > 3*1024*1024) { showToast(t("⚠️ Imagen muy grande (máx 3MB)")); return; }
-  compressImagePNG(file, 256, 300, b64 => {
+  compressImagePNG(file, 256, 300, async b64 => {
     const el = document.getElementById(previewId);
     el.innerHTML = `<img src="${b64}" style="width:100%;height:100%;object-fit:cover;border-radius:14px;">`;
     el.style.background = 'transparent';
-    document.getElementById(hiddenId).value = b64;
+    document.getElementById(hiddenId).value = '';
+    document.getElementById(hiddenId).dataset.uploading = '1';
     // Clear emoji field
     const emojiField = previewId==='new-server-icon-preview' ? 'new-server-icon-emoji' : 'ss-server-icon';
     const ef = document.getElementById(emojiField);
     if(ef) ef.value='';
-    showToast(t("✅ Imagen cargada"));
+    showToast(t("⏳ Subiendo imagen..."));
+    const url = await uploadToSupabaseStorage(b64, 'server-icons');
+    document.getElementById(hiddenId).dataset.uploading = '';
+    if(url){
+      document.getElementById(hiddenId).value = url;
+      showToast(t("✅ Imagen cargada"));
+    } else {
+      showToast(t("⚠️ No se pudo subir la imagen (revisa la configuración de Supabase Storage)"));
+    }
   });
 }
 function compressImagePNG(file, maxW, maxH, maxKB, cb) {
@@ -9556,7 +9650,8 @@ function saveScheduledMessage() {
   if (!text) { showToast(t("⚠️ Escribe un mensaje")); return; }
   if (!timeVal) { showToast(t("⚠️ Selecciona fecha/hora")); return; }
   const ts = new Date(timeVal).getTime();
-  if (ts <= Date.now()) { showToast(t("⚠️ La hora debe ser en el futuro")); return; }
+  const _now = (typeof nowServer==='function')?nowServer():Date.now();
+  if (ts <= _now + 30000) { showToast(t("⚠️ La hora debe ser en el futuro")); return; }
   const entry = { id: genId(8), text, ts, srvId: state.currentServerId, chId: state.currentChannelId, created: Date.now() };
   _scheduledMessages.push(entry);
   try { localStorage.setItem('nova_scheduled', JSON.stringify(_scheduledMessages)); } catch(e) {}
@@ -9565,7 +9660,8 @@ function saveScheduledMessage() {
   showToast('🕐 Mensaje programado para ' + new Date(ts).toLocaleString('es'));
 }
 function scheduleDispatch(entry) {
-  const delay = entry.ts - Date.now();
+  const _now = (typeof nowServer==='function')?nowServer():Date.now();
+  const delay = entry.ts - _now;
   if (delay < 0) return;
   setTimeout(async () => {
     // Only send if still in same server/channel? No — always send
