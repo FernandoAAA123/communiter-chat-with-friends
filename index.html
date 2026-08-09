@@ -60,6 +60,61 @@
   window._firebaseReady = true;
   document.dispatchEvent(new Event('firebase-ready'));
 </script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+// ── SUPABASE STORAGE (para imágenes/GIFs/archivos del chat) ──
+// Esto reemplaza el guardado de imágenes/GIFs/archivos como base64 dentro de
+// los mensajes de Firebase RTDB. Antes, cada mensaje con una imagen/GIF/archivo
+// cargaba ese peso completo en el árbol de datos, y CADA VEZ que alguien abría
+// un canal se volvía a descargar todo ese historial — eso agotaba la cuota
+// diaria de descarga del plan gratuito (Spark) de Firebase.
+// Ahora solo subimos el archivo a Supabase Storage y guardamos la URL (unos
+// bytes) en el mensaje. Reemplazá estos valores con los de tu proyecto de
+// Supabase (Project Settings → API):
+const SUPABASE_STORAGE_URL = "https://qngfevjsufomtcrxuwyp.supabase.co";
+const SUPABASE_STORAGE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFuZ2ZldmpzdWZvbXRjcnh1d3lwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYyMTM1NjIsImV4cCI6MjEwMTc4OTU2Mn0.5W6tkbZ0wj_FOvrS9jWL2XJje5ol3fPrhETIt0rroeY";
+const SUPABASE_STORAGE_BUCKET = "communiter-uploads";
+
+let _supaStorageClient = null;
+function getSupaStorageClient(){
+  if(_supaStorageClient) return _supaStorageClient;
+  if(!window.supabase || SUPABASE_STORAGE_URL.includes('TU-PROYECTO')) return null;
+  _supaStorageClient = window.supabase.createClient(SUPABASE_STORAGE_URL, SUPABASE_STORAGE_ANON_KEY);
+  return _supaStorageClient;
+}
+function dataUrlToBlob(dataUrl){
+  const [meta, b64] = dataUrl.split(',');
+  const mime = /data:(.*?);base64/.exec(meta)?.[1] || 'application/octet-stream';
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], {type:mime});
+}
+function extFromMime(mime){
+  const map={'image/jpeg':'jpg','image/jpg':'jpg','image/png':'png','image/gif':'gif','image/webp':'webp'};
+  return map[mime] || (mime.split('/')[1]||'bin').split('+')[0];
+}
+// Sube un dataURL (base64) o un File/Blob a Supabase Storage y devuelve la URL pública.
+// Si Supabase no está configurado, devuelve null y quien llama debe manejar el fallback.
+async function uploadToSupabaseStorage(input, folder, fileNameHint){
+  const client = getSupaStorageClient();
+  if(!client) return null;
+  let blob, ext;
+  if(typeof input === 'string'){ // dataURL
+    blob = dataUrlToBlob(input);
+    ext = extFromMime(blob.type);
+  } else { // File object
+    blob = input;
+    ext = (input.name && input.name.includes('.')) ? input.name.split('.').pop() : extFromMime(input.type);
+  }
+  const path = `${folder}/${Date.now()}_${Math.random().toString(36).slice(2,8)}${fileNameHint?('_'+fileNameHint.replace(/[^a-zA-Z0-9._-]/g,'')):''}.${ext}`;
+  const {data, error} = await client.storage.from(SUPABASE_STORAGE_BUCKET).upload(path, blob, {contentType:blob.type||undefined, upsert:false});
+  if(error){ console.warn('[SupabaseStorage] upload failed', error); return null; }
+  const {data:pub} = client.storage.from(SUPABASE_STORAGE_BUCKET).getPublicUrl(data.path);
+  return pub.publicUrl;
+}
+window._uploadToSupabaseStorage = uploadToSupabaseStorage;
+</script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
 
@@ -3551,7 +3606,7 @@ function subscribeChannel(channelId){
           state.unreadCounts[channelId]=(state.unreadCounts[channelId]||0)+1;
           renderChannelsPanel();
         }
-        const preview=m.audioData?'🎤 Mensaje de voz':m.imageData?'🖼️ Imagen':m.fileData?'📎 '+(m.fileName||'Archivo'):(m.content||'').substring(0,60);
+        const preview=m.audioData?'🎤 Mensaje de voz':(m.imageData||m.imageUrl)?'🖼️ Imagen':(m.fileData||m.fileUrl)?'📎 '+(m.fileName||'Archivo'):(m.content||'').substring(0,60);
         sendDesktopNotif(m.name, preview, m.avatarUrl||'');
       });
     }
@@ -3589,7 +3644,7 @@ function subscribeDMChannel(dmId){
           renderChannelsPanel();
           renderDmAvatarRail();
         }
-        const preview=m.audioData?'🎤 Mensaje de voz':m.imageData?'🖼️ Imagen':m.fileData?'📎 '+(m.fileName||'Archivo'):(m._decrypted!==undefined?m._decrypted:m.content||'').substring(0,60);
+        const preview=m.audioData?'🎤 Mensaje de voz':(m.imageData||m.imageUrl)?'🖼️ Imagen':(m.fileData||m.fileUrl)?'📎 '+(m.fileName||'Archivo'):(m._decrypted!==undefined?m._decrypted:m.content||'').substring(0,60);
         sendDesktopNotif(m.name, preview, m.avatarUrl||'');
       });
     }
@@ -4441,7 +4496,7 @@ function mediaHtml(msg){
   if(msg.audioData)return`<br><audio controls src="${msg.audioData}" style="margin-top:6px;max-width:280px;border-radius:var(--r-sm);"></audio>`;
   if(msg.stickerUrl)return`<img src="${msg.stickerUrl}" alt="${msg.sticker||'sticker'}" style="width:140px;height:140px;object-fit:contain;margin-top:4px;display:block;">`;
   if(msg.sticker)return`<div style="font-size:3rem;margin-top:4px;">${msg.sticker}</div>`;
-  if(msg.fileData)return buildFileAttachmentCard(msg);
+  if(msg.fileData||msg.fileUrl)return buildFileAttachmentCard(msg);
   // Auto-embed YouTube link if message contains one
   const yt=extractYouTubeId(msg.content);
   if(yt)return`<div style="margin-top:8px;max-width:400px;border-radius:var(--r-sm);overflow:hidden;aspect-ratio:16/9;background:#000;"><iframe width="100%" height="100%" src="https://www.youtube.com/embed/${yt}" title="YouTube video" data-i18n-title="YouTube video" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>`;
@@ -4500,7 +4555,8 @@ function buildFileAttachmentCard(msg){
     mp3:'🎵',wav:'🎵',ogg:'🎵',
   };
   const icon=iconMap[ext]||'📎';
-  return `<a href="${msg.fileData}" download="${name}" class="file-attach-card" style="margin-top:8px;display:flex;align-items:center;gap:12px;max-width:340px;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 12px;text-decoration:none;">
+  const href=msg.fileUrl||msg.fileData;
+  return `<a href="${href}" download="${name}" class="file-attach-card" style="margin-top:8px;display:flex;align-items:center;gap:12px;max-width:340px;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 12px;text-decoration:none;">
     <div style="font-size:1.7rem;flex-shrink:0;">${icon}</div>
     <div style="flex:1;min-width:0;">
       <div style="font-size:.85rem;color:var(--text-0);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}</div>
@@ -4553,7 +4609,7 @@ function extractDirectVideoUrl(text){
 function openImgViewer(msgId){
   const msgs=state.messages[state.currentChannelId]||[];
   const msg=msgs.find(m=>m.id===msgId);
-  const src=msg?.imageData||msg?.coverImg;
+  const src=msg?.imageData||msg?.imageUrl||msg?.coverImg;
   if(!msg||!src)return;
   const overlay=document.createElement('div');
   overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:9999;display:flex;align-items:center;justify-content:center;cursor:zoom-out;';
@@ -4786,7 +4842,8 @@ function checkCanSendMessage(channelId){
 async function sendMessage(){
   const input=document.getElementById('msg-input');
   const content=input.value.trim();
-  const pendingImg=state._pendingImageB64||null;
+  const pendingImg=state._pendingImageUrl||null;
+  if(state._pendingImageUploading){showToast(t("⏳ Espera a que termine de subir la imagen"));return;}
   if((!content&&!pendingImg)||!state.currentChannelId)return;
   if(!checkCanSendMessage(state.currentChannelId))return;
   if(!state._lastSentAt)state._lastSentAt={};
@@ -4803,7 +4860,7 @@ async function sendMessage(){
     storedContent=r.content;
   }
   const msg={id:'msg'+genId(12),uid:u.uid,name:u.name,color:u.nameColor||'',roleColor:_rc,avatarUrl:_msgAvatar,content:storedContent,ts:Date.now(),reactions:[],pinned:false,edited:false,replyTo:state.replyToMsg?.id||null};
-  if(pendingImg)msg.imageData=pendingImg;
+  if(pendingImg)msg.imageUrl=pendingImg;
   if(isDM){
     if(content)msg._decrypted=decryptedForLocal;
     fbSet('dmMessages/'+dmId+'/'+msg.id,msg);
@@ -4925,7 +4982,7 @@ function doForwardTo(target){
     id:'msg'+genId(12),uid:state.currentUser.uid,name:state.currentUser.name,
     color:state.currentUser.nameColor||'',avatarUrl:state.currentUser.avatarUrl||'',
     content,ts:Date.now(),reactions:[],pinned:false,edited:false,
-    imageData:msg.imageData||null,fileData:msg.fileData||null,fileName:msg.fileName||null,
+    imageData:msg.imageData||null,imageUrl:msg.imageUrl||null,fileData:msg.fileData||null,fileUrl:msg.fileUrl||null,fileName:msg.fileName||null,
     fileType:msg.fileType||null,audioData:msg.audioData||null,
     forwardedFrom:{name:msg.name,ts:msg.ts}
   };
@@ -4933,7 +4990,7 @@ function doForwardTo(target){
     const dmId=getDMId(state.currentUser.uid,target.uid);
     fbSet('dmMessages/'+dmId+'/'+fwd.id,fwd);
     const otherInfo=state.dmConversations[target.uid]||{name:'?'};
-    const preview='↪️ '+(content||(fwd.imageData?'Imagen':fwd.fileData?'Archivo':fwd.audioData?'Mensaje de voz':'')).substring(0,40);
+    const preview='↪️ '+(content||((fwd.imageData||fwd.imageUrl)?'Imagen':(fwd.fileData||fwd.fileUrl)?'Archivo':fwd.audioData?'Mensaje de voz':'')).substring(0,40);
     fbSet('dms/'+state.currentUser.uid+'/'+target.uid,{uid:target.uid,name:otherInfo.name,avatarUrl:otherInfo.avatarUrl||'',lastMsg:preview,ts:Date.now()});
     fbSet('dms/'+target.uid+'/'+state.currentUser.uid,{uid:state.currentUser.uid,name:state.currentUser.name,avatarUrl:state.currentUser.avatarUrl||'',lastMsg:preview,ts:Date.now()});
   }else{
@@ -8382,18 +8439,24 @@ function handleImgUpload(input, previewId, hiddenId, maxW, maxH) {
     const isOwnProfileSlot = previewId === 'us-avatar-preview' || previewId === 'us-banner-preview';
     if (isOwnProfileSlot && !hasCommuniterPlus(state.currentUser)) { showToast(t("🔒 GIFs como foto/banner son de Communiter+")); return; }
     if (file.size > 3*1024*1024) { showToast(t("⚠️ GIF muy grande (máx 3MB para animados)")); return; }
-    const reader = new FileReader();
-    reader.onload = e => {
-      const b64 = e.target.result;
-      const el = document.getElementById(previewId);
-      el.style.backgroundImage = `url(${b64})`;
-      el.style.backgroundSize = 'cover';
-      el.style.backgroundPosition = 'center';
-      el.textContent = '';
-      document.getElementById(hiddenId).value = b64;
-      if (previewId === 'us-banner-preview') resetBannerPosition();
-    };
-    reader.readAsDataURL(file);
+    const el = document.getElementById(previewId);
+    // Vista previa instantánea con blob local (no gasta cuota de Firebase ni espera la subida)
+    const localUrl = URL.createObjectURL(file);
+    el.style.backgroundImage = `url(${localUrl})`;
+    el.style.backgroundSize = 'cover';
+    el.style.backgroundPosition = 'center';
+    el.textContent = '';
+    document.getElementById(hiddenId).value = '';
+    document.getElementById(hiddenId).dataset.uploading = '1';
+    uploadToSupabaseStorage(file, 'avatars-banners', file.name).then(url=>{
+      document.getElementById(hiddenId).dataset.uploading = '';
+      if(url){
+        document.getElementById(hiddenId).value = url;
+      } else {
+        showToast(t("⚠️ No se pudo subir el GIF (revisa la configuración de Supabase Storage)"));
+      }
+    });
+    if (previewId === 'us-banner-preview') resetBannerPosition();
     return;
   }
   compressImage(file, maxW, maxH, maxW > 300 ? 200 : 150, b64 => {
@@ -8808,15 +8871,26 @@ function handleChatImageUpload(input){
   if(bar){bar.style.display='flex';}
   if(prev){prev.style.opacity='.4';}
   compressImage(file,800,800,400,b64=>{
-    state._pendingImageB64=b64;
-    if(prev){prev.src=b64;prev.style.opacity='1';}
+    if(prev){prev.src=b64;prev.style.opacity='.55';} // vista previa local mientras se sube
     if(bar)bar.style.display='flex';
     document.getElementById('msg-input')?.focus();
+    state._pendingImageUploading=true;
+    uploadToSupabaseStorage(b64,'chat-images').then(url=>{
+      state._pendingImageUploading=false;
+      if(url){
+        state._pendingImageUrl=url;
+        if(prev)prev.style.opacity='1';
+      } else {
+        showToast(t("⚠️ No se pudo subir la imagen (revisa la configuración de Supabase Storage)"));
+        cancelPendingImage();
+      }
+    });
   },()=>{ if(bar)bar.style.display='none'; });
   input.value='';
 }
 function cancelPendingImage(){
-  state._pendingImageB64=null;
+  state._pendingImageUrl=null;
+  state._pendingImageUploading=false;
   const bar=document.getElementById('pending-img-bar');
   if(bar)bar.style.display='none';
 }
@@ -8833,23 +8907,26 @@ function formatFileSize(bytes){
   while(n>=1024&&i<units.length-1){n/=1024;i++;}
   return n.toFixed(n<10&&i>0?1:0)+' '+units[i];
 }
-function handleChatFileUpload(input){
+async function handleChatFileUpload(input){
   const file=input.files[0];if(!file)return;
   input.value='';
   if(!state.currentChannelId&&!state.currentDmUid){showToast(t("⚠️ Selecciona un canal primero"));return;}
   if(file.size>FILE_ATTACH_MAX_MB*1024*1024){showToast(currentLang==='en'?`⚠️ File too large (max ${FILE_ATTACH_MAX_MB}MB)`:`⚠️ Archivo muy grande (máx ${FILE_ATTACH_MAX_MB}MB)`);return;}
-  const reader=new FileReader();
-  reader.onload=()=>{
-    const u=state.currentUser;
-    const isDM=!!state.currentDmUid;
-    const _rc=isDM?'':getRoleColorForUserInServer(u.uid,state.currentServerId);
-    const msg={id:'msg'+genId(12),uid:u.uid,name:u.name,color:u.nameColor||'',roleColor:_rc,avatarUrl:u.avatarUrl||'',content:'',
-      fileData:reader.result,fileName:file.name,fileSize:file.size,fileType:file.type||'',ts:Date.now(),reactions:[],pinned:false};
-    msg.channelId=state.currentChannelId;
-    sendMsg(msg);
-  };
-  reader.onerror=()=>showToast(t("⚠️ No se pudo leer el archivo"));
-  reader.readAsDataURL(file);
+  showToast(t("⏳ Subiendo archivo..."));
+  const url=await uploadToSupabaseStorage(file,'chat-files',file.name);
+  const u=state.currentUser;
+  const isDM=!!state.currentDmUid;
+  const _rc=isDM?'':getRoleColorForUserInServer(u.uid,state.currentServerId);
+  const msg={id:'msg'+genId(12),uid:u.uid,name:u.name,color:u.nameColor||'',roleColor:_rc,avatarUrl:u.avatarUrl||'',content:'',
+    fileName:file.name,fileSize:file.size,fileType:file.type||'',ts:Date.now(),reactions:[],pinned:false};
+  if(url){
+    msg.fileUrl=url;
+  } else {
+    showToast(t("⚠️ No se pudo subir a Supabase Storage. Revisa la configuración. No se guardó el archivo."));
+    return;
+  }
+  msg.channelId=state.currentChannelId;
+  sendMsg(msg);
 }
 
 // ── AUDIO RECORDING ──
@@ -9004,7 +9081,7 @@ function sendMsg(msg){
     fbSet('dmMessages/'+dmId+'/'+msg.id,msg);
     const u=state.currentUser,otherUid=state.currentDmUid;
     const otherInfo=state.dmConversations[otherUid]||{name:'?'};
-    const lastMsgPreview=msg.audioData?'🎤 Mensaje de voz':msg.imageData?'🖼️ Imagen':msg.fileData?'📎 '+(msg.fileName||'Archivo'):(msg.content||'').substring(0,40);
+    const lastMsgPreview=msg.audioData?'🎤 Mensaje de voz':(msg.imageData||msg.imageUrl)?'🖼️ Imagen':(msg.fileData||msg.fileUrl)?'📎 '+(msg.fileName||'Archivo'):(msg.content||'').substring(0,40);
     fbSet('dms/'+u.uid+'/'+otherUid,{uid:otherUid,name:otherInfo.name,avatarUrl:otherInfo.avatarUrl||'',lastMsg:lastMsgPreview,ts:Date.now()});
     fbSet('dms/'+otherUid+'/'+u.uid,{uid:u.uid,name:u.name,avatarUrl:u.avatarUrl||'',lastMsg:lastMsgPreview,ts:Date.now()});
   }
@@ -9156,11 +9233,18 @@ document.addEventListener('paste',e=>{
   if(!imageItem)return;
   e.preventDefault();
   const file=imageItem.getAsFile();if(!file)return;
-  compressImage(file,800,800,400,b64=>{
+  compressImage(file,800,800,400,async b64=>{
     const u=state.currentUser;
     const isDM=!!state.currentDmUid;
     const _rc=isDM?'':getRoleColorForUserInServer(u.uid,state.currentServerId);
-    const msg={id:'msg'+genId(12),uid:u.uid,name:u.name,color:u.nameColor||'',roleColor:_rc,avatarUrl:u.avatarUrl||'',content:'',imageData:b64,ts:Date.now(),reactions:[],pinned:false,channelId:state.currentChannelId};
+    const url=await uploadToSupabaseStorage(b64,'chat-images');
+    const msg={id:'msg'+genId(12),uid:u.uid,name:u.name,color:u.nameColor||'',roleColor:_rc,avatarUrl:u.avatarUrl||'',content:'',ts:Date.now(),reactions:[],pinned:false,channelId:state.currentChannelId};
+    if(url){
+      msg.imageUrl=url;
+    } else {
+      showToast(t("⚠️ No se pudo subir la imagen pegada (revisa la configuración de Supabase Storage)"));
+      return;
+    }
     sendMsg(msg);showToast(t("<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\"/><circle cx=\"8.5\" cy=\"8.5\" r=\"1.5\"/><polyline points=\"21 15 16 10 5 21\"/></svg> Imagen pegada"));
   });
 });
