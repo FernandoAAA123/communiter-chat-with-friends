@@ -4856,7 +4856,7 @@ function buildMemberEl(m,isOnline){
   const avatarRingStyle=(!m.avatarDecorationImageUrl&&ringColor)?`box-shadow:0 0 0 2px ${ringColor};`:'';
   // Igual que en el popup de perfil: la imagen de decoración va superpuesta y más
   // grande que el avatar (no de fondo), así soporta diseños que sobresalen del círculo.
-  const decoImgHtml=m.avatarDecorationImageUrl?`<img src="${m.avatarDecorationImageUrl}" style="position:absolute;top:50%;left:50%;width:150%;height:150%;transform:translate(-50%,-50%);object-fit:contain;pointer-events:none;z-index:2;">`:'';
+  const decoImgHtml=m.avatarDecorationImageUrl?`<img src="${m.avatarDecorationImageUrl}" style="position:absolute;top:50%;left:50%;width:${m.avatarDecorationScale||134}%;height:${m.avatarDecorationScale||134}%;transform:translate(-50%,calc(-50% + ${((m.avatarDecorationOffsetY||0)*32/68).toFixed(1)}px));object-fit:contain;pointer-events:none;z-index:2;">`:'';
   const npCss=nameplateCss(m.nameplateColor1,m.nameplateColor2);
   // La placa ahora es el fondo de TODA la fila (avatar + nombre + badge), no solo
   // un recuadro pegado al texto — así se ve como una tarjeta, igual que en Discord.
@@ -6692,7 +6692,7 @@ function handleStickerUpload(input){
 
 function currentUserCosmetics(){
   const u=state.currentUser||{};
-  return{nameplateColor1:u.nameplateColor1||null,nameplateColor2:u.nameplateColor2||null,avatarDecorationColor:u.avatarDecorationColor||null,avatarDecorationImageUrl:u.avatarDecorationImageUrl||null,profileEffectColor:u.profileEffectColor||null,bannerColor:u.bannerColor||null,bannerUrl:u.bannerUrl||null,bannerPosX:u.bannerPosX??50,bannerPosY:u.bannerPosY??50,nameFont:u.nameFont||'',isPlus:u.isPlus||false,plusGrandfathered:u.plusGrandfathered||false,storeBadgeUrl:u.storeBadgeUrl||null,storeEquipped:u.storeEquipped||null};
+  return{nameplateColor1:u.nameplateColor1||null,nameplateColor2:u.nameplateColor2||null,avatarDecorationColor:u.avatarDecorationColor||null,avatarDecorationImageUrl:u.avatarDecorationImageUrl||null,avatarDecorationScale:u.avatarDecorationScale||134,avatarDecorationOffsetY:u.avatarDecorationOffsetY||0,profileEffectColor:u.profileEffectColor||null,bannerColor:u.bannerColor||null,bannerUrl:u.bannerUrl||null,bannerPosX:u.bannerPosX??50,bannerPosY:u.bannerPosY??50,nameFont:u.nameFont||'',isPlus:u.isPlus||false,plusGrandfathered:u.plusGrandfathered||false,storeBadgeUrl:u.storeBadgeUrl||null,storeEquipped:u.storeEquipped||null};
 }
 // ── INVITE ──
 function copyInviteCode(){const code=document.getElementById('invite-code-text').textContent;navigator.clipboard.writeText(code).then(()=>showToast(t("✅ Código copiado")));}
@@ -6701,7 +6701,7 @@ function approvePending(uid){
   const p=srv.pendingMembers?.find(m=>m.uid===uid);if(!p)return;
   srv.pendingMembers=srv.pendingMembers.filter(m=>m.uid!==uid);
   if(!srv.members)srv.members=[];
-  srv.members.push({uid:p.uid,id:p.uid,name:p.name,avatarUrl:p.avatarUrl||'',roles:['Miembro'],nameplateColor1:p.nameplateColor1||null,nameplateColor2:p.nameplateColor2||null,avatarDecorationColor:p.avatarDecorationColor||null,avatarDecorationImageUrl:p.avatarDecorationImageUrl||null,profileEffectColor:p.profileEffectColor||null,bannerColor:p.bannerColor||null,bannerUrl:p.bannerUrl||null,bannerPosX:p.bannerPosX??50,bannerPosY:p.bannerPosY??50,nameFont:p.nameFont||'',isPlus:p.isPlus||false,plusGrandfathered:p.plusGrandfathered||false,storeBadgeUrl:p.storeBadgeUrl||null,storeEquipped:p.storeEquipped||null});
+  srv.members.push({uid:p.uid,id:p.uid,name:p.name,avatarUrl:p.avatarUrl||'',roles:['Miembro'],nameplateColor1:p.nameplateColor1||null,nameplateColor2:p.nameplateColor2||null,avatarDecorationColor:p.avatarDecorationColor||null,avatarDecorationImageUrl:p.avatarDecorationImageUrl||null,avatarDecorationScale:p.avatarDecorationScale||134,avatarDecorationOffsetY:p.avatarDecorationOffsetY||0,profileEffectColor:p.profileEffectColor||null,bannerColor:p.bannerColor||null,bannerUrl:p.bannerUrl||null,bannerPosX:p.bannerPosX??50,bannerPosY:p.bannerPosY??50,nameFont:p.nameFont||'',isPlus:p.isPlus||false,plusGrandfathered:p.plusGrandfathered||false,storeBadgeUrl:p.storeBadgeUrl||null,storeEquipped:p.storeEquipped||null});
   saveServers();openServerSettings();showToast('✅ '+p.name+' aceptado');
 }
 function rejectPending(uid){
@@ -7017,7 +7017,12 @@ function renderProfilePopupContent(u,uid,loading){
       // decoraciones tipo Discord que sobresalen del círculo (dientes, aletas, etc.)
       // en vez de ser solo un anillo parejo alrededor.
       decoEl.style.background='';decoEl.style.padding='0';
-      if(decoImgEl){decoImgEl.src=u.avatarDecorationImageUrl;decoImgEl.style.display='block';}
+      if(decoImgEl){
+        decoImgEl.src=u.avatarDecorationImageUrl;decoImgEl.style.display='block';
+        const scale=u.avatarDecorationScale||134,offY=u.avatarDecorationOffsetY||0;
+        decoImgEl.style.width=scale+'%';decoImgEl.style.height=scale+'%';
+        decoImgEl.style.transform=`translate(-50%,calc(-50% + ${offY}px))`;
+      }
     }else{
       if(decoImgEl){decoImgEl.style.display='none';decoImgEl.removeAttribute('src');}
       const frameCss=avatarFrameCss(u.avatarDecorationColor);
@@ -7367,7 +7372,10 @@ function loadAvatarDecorationCatalog(){
   grid.innerHTML='<div style="grid-column:1/-1;font-size:.75rem;color:var(--text-3);">Cargando...</div>';
   fbOn('catalog/avatarDecorations',snap=>{
     const all=Object.values(snap.val()||{});
-    _avatarDecorationCatalog=all.filter(t=>!t.type||t.type==='avatarFrame');
+    // Solo se muestran las publicadas — las que Creator tiene en borrador
+    // (published===false) quedan ocultas para los usuarios hasta publicarlas.
+    // Los items viejos sin ese campo se tratan como publicados (compatibilidad).
+    _avatarDecorationCatalog=all.filter(t=>(!t.type||t.type==='avatarFrame')&&t.published!==false);
     renderAvatarDecorationCatalogGrid(_avatarDecorationCatalog);
   });
 }
@@ -7801,7 +7809,7 @@ function saveUserSettings(){
   const eKey=emailToKey(state.currentUser.email||'');
   if(eKey)fbSet('usersByEmail/'+eKey,userData);
   fbSet('presence/'+state.currentUser.uid,{uid:state.currentUser.uid,name,avatarUrl,nameColor,status,customStatus,activity,ts:Date.now()});
-  state.servers.forEach(srv=>{const m=(srv.members||[]).find(m=>(m.uid||m.id)===state.currentUser.uid);if(m){m.name=name;m.avatarUrl=avatarUrl;m.avatarDecorationColor=avatarDecorationColor;m.avatarDecorationImageUrl=avatarDecorationImageUrl;m.nameplateColor1=nameplateColor1;m.nameplateColor2=nameplateColor2;m.profileEffectColor=profileEffectColor;m.bannerColor=bannerColor;m.bannerUrl=bannerUrl;m.bannerPosX=bannerPosX;m.bannerPosY=bannerPosY;m.nameFont=nameFont;m.isPlus=state.currentUser.isPlus;m.plusGrandfathered=state.currentUser.plusGrandfathered;m.storeBadgeUrl=state.currentUser.storeBadgeUrl||null;m.storeEquipped=state.currentUser.storeEquipped||null;}});
+  state.servers.forEach(srv=>{const m=(srv.members||[]).find(m=>(m.uid||m.id)===state.currentUser.uid);if(m){m.name=name;m.avatarUrl=avatarUrl;m.avatarDecorationColor=avatarDecorationColor;m.avatarDecorationImageUrl=avatarDecorationImageUrl;m.avatarDecorationScale=avatarDecorationScale;m.avatarDecorationOffsetY=avatarDecorationOffsetY;m.nameplateColor1=nameplateColor1;m.nameplateColor2=nameplateColor2;m.profileEffectColor=profileEffectColor;m.bannerColor=bannerColor;m.bannerUrl=bannerUrl;m.bannerPosX=bannerPosX;m.bannerPosY=bannerPosY;m.nameFont=nameFont;m.isPlus=state.currentUser.isPlus;m.plusGrandfathered=state.currentUser.plusGrandfathered;m.storeBadgeUrl=state.currentUser.storeBadgeUrl||null;m.storeEquipped=state.currentUser.storeEquipped||null;}});
   saveServers();closeModal('user-settings-modal');updateUserBar();renderAll();
   showToast(t("✅ Perfil actualizado"));
   if(_plusChangesBlocked)setTimeout(()=>showToast(t("🔒 La placa/marco/efecto/fuente no se guardaron — necesitas Communiter+")),1600);
@@ -8862,6 +8870,8 @@ function openUserSettings() {
   state._selAvatarDecoOn=!!(u.avatarDecorationColor);
   state._selAvatarDecoColor=u.avatarDecorationColor||'#f8b500';
   state._selAvatarDecoImageUrl=u.avatarDecorationImageUrl||null;
+  state._selAvatarDecoScale=u.avatarDecorationScale||134;
+  state._selAvatarDecoOffsetY=u.avatarDecorationOffsetY||0;
   state._selProfileEffectOn=!!(u.profileEffectColor);
   state._selProfileEffectColor=u.profileEffectColor||'#7c3aed';
   state._selBannerColor=u.bannerColor||'#5865f2';
