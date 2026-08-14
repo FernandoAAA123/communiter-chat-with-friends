@@ -127,6 +127,15 @@ async function uploadToSupabaseStorage(input, folder, fileNameHint){
   return pub.publicUrl;
 }
 window._uploadToSupabaseStorage = uploadToSupabaseStorage;
+// Diagnóstico: cuando una <img> falla al cargar (típicamente onerror la oculta
+// en silencio para no romper el layout), esto deja la URL en la consola —
+// así se puede distinguir un bucket de Supabase Storage sin permiso público
+// (403) de una URL simplemente rota (404) sin tener que adivinar.
+document.addEventListener('error', e=>{
+  if(e.target && e.target.tagName==='IMG' && e.target.src){
+    console.warn('[img failed to load]', e.target.src);
+  }
+}, true);
 </script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
@@ -1326,6 +1335,19 @@ input[type=color]{width:32px;height:32px;border:none;border-radius:var(--r-xs);c
     <p class="sub" style="margin-bottom:14px;"><span data-i18n="Tu saldo y los cosméticos exclusivos del Store.">Tu saldo y los cosméticos exclusivos del Store.</span></p>
     <div id="store-progress-content" style="font-size:.85rem;color:var(--text-3);max-height:72vh;overflow-y:auto;"><span data-i18n="Cargando...">Cargando...</span></div>
     <div class="modal-actions" style="margin-top:16px;"><button class="btn btn-primary" onclick="closeModal('store-progress-modal')"><span data-i18n="Cerrar">Cerrar</span></button></div>
+  </div>
+</div>
+<div class="modal-overlay" id="rewards-modal" style="z-index:1050;">
+  <div class="modal" style="width:640px;max-width:94vw;padding:24px;">
+    <h2 style="margin-bottom:4px;">🎁 Communiter Rewards</h2>
+    <p class="sub" style="margin-bottom:14px;">Ganá Communicoins gratis todos los días, o creando cosméticos para la comunidad.</p>
+    <div style="display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--border);">
+      <button class="rw-tab-btn active" data-tab="daily" onclick="switchRewardsTab('daily')" style="background:none;border:none;color:var(--text-0);padding:8px 12px;font-size:.82rem;font-weight:600;cursor:pointer;border-bottom:2px solid var(--accent);">Diario</button>
+      <button class="rw-tab-btn" data-tab="submit" onclick="switchRewardsTab('submit')" style="background:none;border:none;color:var(--text-3);padding:8px 12px;font-size:.82rem;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;">Enviar cosmético</button>
+      <button class="rw-tab-btn" data-tab="mine" onclick="switchRewardsTab('mine')" style="background:none;border:none;color:var(--text-3);padding:8px 12px;font-size:.82rem;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;">Mis envíos</button>
+    </div>
+    <div id="rewards-content" style="max-height:60vh;overflow-y:auto;font-size:.85rem;color:var(--text-2);"></div>
+    <div class="modal-actions" style="margin-top:16px;"><button class="btn btn-primary" onclick="closeModal('rewards-modal')">Cerrar</button></div>
   </div>
 </div>
 <div class="modal-overlay" id="nameplate-modal" style="z-index:1050;">
@@ -2630,6 +2652,209 @@ function handleStoreFileUpload(input){
   reader.readAsText(file);
   input.value='';
 }
+// ══════════════════════════ Communiter Rewards ══════════════════════════
+// El saldo lo maneja Supabase (window.Store, ver store.js) — acá solo se
+// arma la UI y se llama a esas funciones. Firebase únicamente guarda los
+// ENVÍOS de cosméticos (metadata del diseño + estado de moderación), nunca
+// coins ni nada que mueva plata/saldo.
+function openRewards(){
+  openModal('rewards-modal');
+  switchRewardsTab('daily');
+}
+function switchRewardsTab(tabName){
+  document.querySelectorAll('.rw-tab-btn').forEach(b=>{
+    const active=b.dataset.tab===tabName;
+    b.style.color=active?'var(--text-0)':'var(--text-3)';
+    b.style.borderBottomColor=active?'var(--accent)':'transparent';
+  });
+  if(tabName==='daily')renderRewardsDailyTab();
+  else if(tabName==='submit')renderRewardsSubmitTab();
+  else if(tabName==='mine')renderRewardsMineTab();
+}
+
+// ── Diario / racha ──
+async function renderRewardsDailyTab(){
+  const el=document.getElementById('rewards-content');
+  if(!window.__storeInjected){
+    el.innerHTML='<div style="text-align:center;padding:20px;">'+t('🔒 Activá Communiter Store primero para ver tu progreso.')+'</div>';
+    return;
+  }
+  el.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-3);">Cargando...</div>';
+  const uid=state.currentUser.uid;
+  const [status,adCount]=await Promise.all([
+    window.Store.getDailyClaimStatus(uid),
+    window.Store.getAdWatchCount(uid)
+  ]);
+  const now=Date.now();
+  const lastClaim=status?new Date(status.last_claim_at).getTime():0;
+  const hoursSince=status?(now-lastClaim)/3600000:999;
+  const canClaim=hoursSince>=20;
+  const streakBroken=hoursSince>48;
+  const currentStreak=status?.streak||0;
+  const nextStreak=streakBroken||!status?1:Math.min(currentStreak+1,7);
+  const nextAmount=50+Math.min(nextStreak-1,6)*10;
+  const AD_MAX=3;
+
+  el.innerHTML=`
+    <div style="text-align:center;padding:18px;background:var(--bg-2);border:1px solid var(--border);border-radius:12px;margin-bottom:14px;">
+      <div style="font-size:2rem;margin-bottom:4px;">${canClaim?'🎁':'✅'}</div>
+      <div style="font-weight:700;color:var(--text-0);font-size:1rem;margin-bottom:2px;">${canClaim?'Recompensa disponible':'Ya la reclamaste hoy'}</div>
+      <div style="font-size:.78rem;color:var(--text-3);margin-bottom:14px;">Racha actual: ${currentStreak} día${currentStreak===1?'':'s'} ${currentStreak>0?'🔥':''}</div>
+      <button class="btn btn-primary" ${canClaim?'':'disabled style="opacity:.5;cursor:not-allowed;"'} onclick="claimDailyReward()">${canClaim?`Reclamar +${nextAmount} 🪙`:'Volvé mañana'}</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;padding:14px;background:var(--bg-2);border:1px solid var(--border);border-radius:12px;">
+      <div style="font-size:1.5rem;">📺</div>
+      <div style="flex:1;">
+        <div style="font-weight:600;color:var(--text-0);font-size:.85rem;">Ver un anuncio</div>
+        <div style="font-size:.72rem;color:var(--text-3);">Opcional — ${adCount}/${AD_MAX} hoy. +25 🪙 cada uno.</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" ${adCount>=AD_MAX?'disabled style="opacity:.5;cursor:not-allowed;"':''} onclick="watchAdForCoins()">Ver anuncio</button>
+    </div>
+  `;
+}
+async function claimDailyReward(){
+  const res=await window.Store.claimDailyReward(state.currentUser.uid);
+  if(res&&res.success){
+    showToast(`🎉 +${res.amount} Communicoins — racha de ${res.streak} día${res.streak===1?'':'s'}`);
+  }else if(res&&res.error==='too_soon'){
+    showToast('⏳ Ya reclamaste tu recompensa de hoy');
+  }else{
+    showToast('⚠️ No se pudo reclamar la recompensa');
+  }
+  renderRewardsDailyTab();
+}
+async function watchAdForCoins(){
+  showRewardsAdPlaceholder(async()=>{
+    const res=await window.Store.claimAdReward(state.currentUser.uid);
+    if(res&&res.success)showToast(`✅ +${res.amount} Communicoins`);
+    else if(res&&res.error==='daily_limit_reached')showToast('⚠️ Ya llegaste al máximo de anuncios de hoy');
+    else showToast('⚠️ No se pudo procesar');
+    renderRewardsDailyTab();
+  });
+}
+// Simulación simple del anuncio — no hay red publicitaria conectada todavía.
+// Sparky puede reemplazar el contenido de este modal por el SDK real
+// (AdSense/AdMob/lo que use) manteniendo la misma función onDone().
+function showRewardsAdPlaceholder(onDone){
+  let seconds=5;
+  const overlay=document.createElement('div');
+  overlay.style.cssText='position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;';
+  overlay.innerHTML=`<div style="width:320px;background:var(--bg-2);border-radius:16px;padding:28px;text-align:center;">
+    <div style="font-size:.72rem;color:var(--text-3);letter-spacing:.05em;margin-bottom:10px;">ANUNCIO SIMULADO</div>
+    <div style="font-size:2.2rem;margin-bottom:10px;">📺</div>
+    <div id="rw-ad-timer" style="font-size:1.4rem;font-weight:700;color:var(--text-0);margin-bottom:16px;">${seconds}s</div>
+    <button class="btn btn-ghost" style="width:100%;opacity:.5;cursor:not-allowed;" id="rw-ad-close" disabled>Cerrar</button>
+  </div>`;
+  document.body.appendChild(overlay);
+  const timerEl=overlay.querySelector('#rw-ad-timer'),closeBtn=overlay.querySelector('#rw-ad-close');
+  const iv=setInterval(()=>{
+    seconds--;
+    if(seconds<=0){
+      clearInterval(iv);
+      timerEl.textContent='¡Listo!';
+      closeBtn.disabled=false;
+      closeBtn.style.opacity='1';closeBtn.style.cursor='pointer';
+      closeBtn.textContent='Reclamar recompensa';
+      closeBtn.onclick=()=>{overlay.remove();onDone();};
+    }else{timerEl.textContent=seconds+'s';}
+  },1000);
+}
+
+// ── Enviar cosmético (metadata en Firebase — sin coins acá, esos se
+// otorgan recién cuando un admin aprueba desde Creator) ──
+const REWARDS_APPROVAL_COINS=200;
+function renderRewardsSubmitTab(){
+  const el=document.getElementById('rewards-content');
+  el.innerHTML=`
+    <p style="font-size:.78rem;color:var(--text-3);margin-bottom:14px;">Mandá tu diseño para el catálogo de Communiter+. Si se aprueba, ganás ${REWARDS_APPROVAL_COINS} 🪙 y tu creación queda disponible para toda la comunidad.</p>
+    <div class="form-group"><label>Tipo</label>
+      <select id="rw-sub-type" class="fi" onchange="renderRewardsSubmitFields()">
+        <option value="avatarFrame">Marco de avatar</option>
+        <option value="nameplate">Placa de nombre</option>
+        <option value="effect">Efecto de perfil</option>
+      </select>
+    </div>
+    <div class="form-group"><label>Nombre *</label><input type="text" id="rw-sub-label" class="fi" placeholder="Mi diseño"></div>
+    <div class="form-group"><label>Categoría (opcional)</label><input type="text" id="rw-sub-category" class="fi" placeholder="Temporada, evento..."></div>
+    <div id="rw-sub-fields"></div>
+    <div class="form-group"><label>Comentario para el moderador (opcional)</label><textarea id="rw-sub-note" class="fi" rows="2" placeholder="Cualquier detalle que quieras agregar..."></textarea></div>
+    <button class="btn btn-primary" style="width:100%;" onclick="submitCosmetic()">Enviar a revisión</button>
+  `;
+  renderRewardsSubmitFields();
+}
+function renderRewardsSubmitFields(){
+  const type=document.getElementById('rw-sub-type').value;
+  const el=document.getElementById('rw-sub-fields');
+  if(type==='avatarFrame'){
+    el.innerHTML=`
+      <div class="form-group"><label>Imagen (PNG con transparencia) — subir archivo</label><input type="file" id="rw-sub-image-file" class="fi" accept="image/*" onchange="handleRewardsImageFile(this)"></div>
+      <div class="form-group"><label>...o pegar URL</label><input type="url" id="rw-sub-image" class="fi" placeholder="https://..."></div>
+      <div class="form-group"><label>Vista previa</label><img id="rw-sub-preview" src="" style="width:70px;height:70px;object-fit:contain;display:none;background:var(--bg-3);border-radius:8px;" onload="this.style.display='block'" onerror="this.style.display='none'"></div>`;
+  }else if(type==='nameplate'){
+    el.innerHTML=`<div class="form-group"><label>Colores del degradé</label><div style="display:flex;gap:10px;"><input type="color" id="rw-sub-color1" value="#ff512f" style="width:56px;height:38px;"><input type="color" id="rw-sub-color2" value="#dd2476" style="width:56px;height:38px;"></div></div>`;
+  }else if(type==='effect'){
+    el.innerHTML=`<div class="form-group"><label>Color del brillo</label><input type="color" id="rw-sub-color1" value="#7c3aed" style="width:56px;height:38px;"></div>`;
+  }
+}
+function handleRewardsImageFile(input){
+  const file=input.files[0];if(!file)return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    document.getElementById('rw-sub-image').value=e.target.result;
+    const prev=document.getElementById('rw-sub-preview');
+    prev.src=e.target.result;prev.style.display='block';
+  };
+  reader.readAsDataURL(file);
+}
+async function submitCosmetic(){
+  const type=document.getElementById('rw-sub-type').value;
+  const label=document.getElementById('rw-sub-label').value.trim();
+  if(!label){showToast('⚠️ Ponele un nombre');return;}
+  const category=document.getElementById('rw-sub-category').value.trim();
+  const note=document.getElementById('rw-sub-note').value.trim();
+  const sub={
+    id:'sub_'+Date.now()+'_'+Math.random().toString(36).slice(2,8),
+    uid:state.currentUser.uid,submitterName:state.currentUser.name||state.currentUser.displayName||'Usuario',
+    type,label,category,note,status:'pending',submittedAt:Date.now()
+  };
+  if(type==='avatarFrame'){
+    sub.imageUrl=document.getElementById('rw-sub-image').value.trim();
+    if(!sub.imageUrl){showToast('⚠️ Subí una imagen o pegá una URL');return;}
+  }else if(type==='nameplate'){
+    sub.color1=document.getElementById('rw-sub-color1').value;
+    sub.color2=document.getElementById('rw-sub-color2').value;
+  }else if(type==='effect'){
+    sub.color=document.getElementById('rw-sub-color1').value;
+  }
+  try{
+    await fbSet('rewards/submissions/'+sub.id,sub);
+    showToast('✅ Enviado — te avisamos cuando lo revisen');
+    switchRewardsTab('mine');
+  }catch(err){showToast('⚠️ No se pudo enviar: '+(err?.message||err));}
+}
+
+// ── Mis envíos ──
+async function renderRewardsMineTab(){
+  const el=document.getElementById('rewards-content');
+  el.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-3);">Cargando...</div>';
+  const snap=await fbGet('rewards/submissions').catch(()=>null);
+  const all=snap&&snap.exists&&snap.exists()?Object.values(snap.val()):[];
+  const mine=all.filter(s=>s.uid===state.currentUser.uid).sort((a,b)=>(b.submittedAt||0)-(a.submittedAt||0));
+  if(!mine.length){el.innerHTML='<div style="text-align:center;color:var(--text-3);padding:24px;">Todavía no enviaste ningún cosmético.</div>';return;}
+  const statusLabel={pending:['⏳ En revisión','var(--yellow,#faa81a)'],approved:['✅ Aprobado','var(--green,#3bc978)'],rejected:['❌ Rechazado','var(--red)']};
+  el.innerHTML=mine.map(s=>{
+    const[label,color]=statusLabel[s.status]||statusLabel.pending;
+    return`<div style="padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--bg-2);margin-bottom:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-weight:600;color:var(--text-0);font-size:.85rem;">${escapeHtml(s.label)}</div>
+        <span style="font-size:.7rem;font-weight:700;color:${color};">${label}</span>
+      </div>
+      <div style="font-size:.72rem;color:var(--text-3);margin-top:2px;">${s.type==='avatarFrame'?'Marco':s.type==='nameplate'?'Placa':'Efecto'} · ${fmtDateTime(s.submittedAt)}</div>
+      ${s.reviewNote?`<div style="font-size:.75rem;color:var(--text-2);margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">💬 ${escapeHtml(s.reviewNote)}</div>`:''}
+    </div>`;
+  }).join('');
+}
+
 async function openStoreProgress(){
   openModal('store-progress-modal');
   const el=document.getElementById('store-progress-content');
@@ -3025,9 +3250,15 @@ function serverHasMention(srv){
 // ── PREFS PERSISTENCE (Firebase, survives Firebase project migration) ──
 let _prefSaveTimer=null;
 let _prefPending={};
-function savePref(partial){
+function savePref(partial,immediate){
   if(!state.currentUser?.uid)return;
   Object.assign(_prefPending,partial);
+  if(immediate){
+    clearTimeout(_prefSaveTimer);
+    const toSend=_prefPending;_prefPending={};
+    fbUpdate('users/'+state.currentUser.uid+'/prefs',toSend).catch(()=>{});
+    return;
+  }
   clearTimeout(_prefSaveTimer);
   _prefSaveTimer=setTimeout(()=>{
     const toSend=_prefPending;_prefPending={};
@@ -3895,7 +4126,7 @@ function buildServerIconEl(srv,myServers){
     ordered.splice(fromIdx,1);
     ordered.splice(toIdx,0,fromId);
     state.serverOrder=ordered;
-    savePref({serverOrder:ordered});
+    savePref({serverOrder:ordered},true); // guardado inmediato, no comparte el debounce con prefs menores
     renderServerBar();
   });
   return div;
@@ -4111,6 +4342,10 @@ function renderChannelsPanel(){
         <div class="member-avatar" style="background:var(--bg-4);width:30px;height:30px;color:#a78bfa;">🏆</div>
         <div style="font-size:.875rem;font-weight:600;">Tienda</div>
         <span style="margin-left:auto;font-size:.6rem;font-weight:700;background:var(--accent);color:#fff;padding:1px 6px;border-radius:6px;">NUEVO</span>
+      </div>
+      <div class="dm-nav-item" onclick="openRewards()" style="position:relative;">
+        <div class="member-avatar" style="background:var(--bg-4);width:30px;height:30px;color:#ffd76a;">🎁</div>
+        <div style="font-size:.875rem;font-weight:600;">Rewards</div>
       </div>
       <div style="padding:10px 14px 6px;font-size:.68rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);">Mensajes directos</div>
     `;
@@ -5701,6 +5936,28 @@ async function changeServerId(srv){
       await fbUpdate('users/'+state.currentUser.uid+'/prefs',{lastServer:raw});
     }
   }catch(e){}
+  // 4b) El orden guardado de la barra lateral usa los IDs de servidor — si no
+  // se actualiza acá, el servidor renombrado deja de encontrarse en
+  // applyServerOrder() y cae al final, en el orden crudo de Firebase en vez
+  // del que eligió el usuario. Se corrige tanto en memoria como lo guardado.
+  if(Array.isArray(state.serverOrder)&&state.serverOrder.includes(oldId)){
+    state.serverOrder=state.serverOrder.map(id=>id===oldId?raw:id);
+    try{await fbUpdate('users/'+state.currentUser.uid+'/prefs',{serverOrder:state.serverOrder});}catch(e){}
+  }
+  // 4c) Mismo arreglo para el resto de los miembros — cada uno guarda su
+  // propio orden en su propio nodo de prefs, así que hay que tocarlos uno
+  // por uno (best-effort: si a alguno no se le puede escribir, no corta el
+  // resto del proceso).
+  for(const m of (srv.members||[])){
+    const mUid=m.uid||m.id;if(!mUid||mUid===state.currentUser.uid)continue;
+    try{
+      const mPrefsSnap=await fbGet('users/'+mUid+'/prefs');
+      const mOrder=mPrefsSnap&&mPrefsSnap.exists&&mPrefsSnap.exists()?(mPrefsSnap.val().serverOrder||[]):[];
+      if(Array.isArray(mOrder)&&mOrder.includes(oldId)){
+        await fbUpdate('users/'+mUid+'/prefs',{serverOrder:mOrder.map(id=>id===oldId?raw:id)});
+      }
+    }catch(e){/* best-effort, sigue con el resto */}
+  }
 
   // 5) Boosts in Supabase (separate project) — if boost.js is active
   if(typeof renameServerBoosts==='function')await renameServerBoosts(oldId,raw);
@@ -5917,6 +6174,7 @@ function saveServerSettings(){
   const newIcon=document.getElementById('ss-server-icon').value.trim();
   if(newIcon)srv.icon=newIcon;
   if(document.getElementById('ss-server-icon-b64').dataset.uploading==='1'){showToast(t("⏳ Wait for the image to finish uploading"));return;}
+  if(document.getElementById('ss-banner-b64').dataset.uploading==='1'){showToast(t("⏳ Wait for the image to finish uploading"));return;}
   const newIconB64=document.getElementById('ss-server-icon-b64').value;
   if(newIconB64)srv.iconImg=newIconB64;
   const newBannerB64=document.getElementById('ss-banner-b64').value;
@@ -8638,6 +8896,16 @@ _initPWA();
 window.addEventListener('resize',updateServerBarFades);
 document.getElementById('server-bar').addEventListener('scroll',updateServerBarFades);
 document.getElementById('server-icons-list').addEventListener('scroll',updateServerBarFades);
+// Si queda un savePref() pendiente (debounced, 400ms) cuando el usuario
+// cierra la pestaña o navega rápido, esto lo manda de una antes de que se
+// pierda — pasaba sobre todo con el orden de servidores tras arrastrar uno.
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='hidden'&&Object.keys(_prefPending).length&&state.currentUser?.uid){
+    clearTimeout(_prefSaveTimer);
+    const toSend=_prefPending;_prefPending={};
+    fbUpdate('users/'+state.currentUser.uid+'/prefs',toSend).catch(()=>{});
+  }
+});
 
 function setTheme(theme, el) {
   document.documentElement.dataset.theme = theme === 'purple' ? '' : theme;
