@@ -127,6 +127,34 @@ async function uploadToSupabaseStorage(input, folder, fileNameHint){
   return pub.publicUrl;
 }
 window._uploadToSupabaseStorage = uploadToSupabaseStorage;
+// Deletes a file from Supabase Storage given its public URL — the counterpart
+// to uploadToSupabaseStorage(). Without this, Supabase Storage only ever grew:
+// the automatic message cleanup (and manual message/channel deletion) removed
+// the Firebase RTDB entry, but the actual image/audio/file blob stayed in the
+// Supabase bucket forever, unused and still counting against storage quota.
+function supabasePathFromPublicUrl(url){
+  if(!url||typeof url!=='string')return null;
+  const marker=`/storage/v1/object/public/${SUPABASE_STORAGE_BUCKET}/`;
+  const idx=url.indexOf(marker);
+  if(idx===-1)return null;
+  return decodeURIComponent(url.slice(idx+marker.length));
+}
+async function deleteFromSupabaseStorage(url){
+  const path=supabasePathFromPublicUrl(url);
+  if(!path)return; // not a Supabase URL (e.g. legacy base64, or already gone) — nothing to do
+  const client=getSupaStorageClient();
+  if(!client)return;
+  try{ await client.storage.from(SUPABASE_STORAGE_BUCKET).remove([path]); }
+  catch(e){ console.warn('[SupabaseStorage] delete failed', e); }
+}
+// Collects and deletes every Supabase-hosted file referenced by a single
+// message (image, attached file, voice message). Safe to call on any
+// message — fields that are empty/null or aren't Supabase URLs are skipped.
+async function deleteMessageSupabaseFiles(m){
+  if(!m)return;
+  const urls=[m.imageUrl,m.fileUrl,m.audioUrl].filter(Boolean);
+  for(const url of urls){ await deleteFromSupabaseStorage(url); }
+}
 // Diagnóstico: cuando una <img> falla al cargar (típicamente onerror la oculta
 // en silencio para no romper el layout), esto deja la URL en la consola —
 // así se puede distinguir un bucket de Supabase Storage sin permiso público
@@ -1168,14 +1196,18 @@ input[type=color]{width:32px;height:32px;border:none;border-radius:var(--r-xs);c
       <input type="text" id="join-code-input" placeholder="ej. abc12xyz" data-i18n-placeholder="ej. abc12xyz" style="flex:1;font-family:monospace;letter-spacing:.06em;font-size:1rem;" oninput="previewJoinServer(this.value)" onkeydown="if(event.key==='Enter')joinByInviteNew()">
       <button class="btn btn-primary" style="white-space:nowrap;" onclick="joinByInviteNew()"><span data-i18n="Unirse">Unirse</span></button>
     </div>
-    <!-- Preview card -->
-    <div id="join-preview" style="display:none;margin-top:16px;background:var(--bg-3);border-radius:12px;padding:14px 16px;border:1px solid var(--border);display:flex;align-items:center;gap:12px;">
-      <div id="join-preview-icon" style="width:44px;height:44px;border-radius:12px;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:1.3rem;font-weight:700;color:#fff;flex-shrink:0;overflow:hidden;"></div>
-      <div>
-        <div id="join-preview-name" style="font-weight:700;color:var(--text-0);font-size:.95rem;"></div>
-        <div id="join-preview-members" style="font-size:.75rem;color:var(--text-3);margin-top:2px;"></div>
+    <!-- Preview card — Discord-style invite card: banner up top, icon overlapping it -->
+    <div id="join-preview" style="display:none;margin-top:16px;background:var(--bg-3);border-radius:12px;overflow:hidden;border:1px solid var(--border);">
+      <div id="join-preview-banner" style="height:90px;background:linear-gradient(135deg,var(--accent),var(--accent-g));background-size:cover;background-position:center;"></div>
+      <div style="padding:0 16px 16px;">
+        <div id="join-preview-icon" style="width:64px;height:64px;border-radius:16px;background:var(--accent);border:4px solid var(--bg-3);margin-top:-32px;display:flex;align-items:center;justify-content:center;font-size:1.6rem;font-weight:700;color:#fff;flex-shrink:0;overflow:hidden;"></div>
+        <div id="join-preview-name" style="font-weight:700;color:var(--text-0);font-size:1.05rem;margin-top:10px;"></div>
+        <div id="join-preview-desc" style="font-size:.78rem;color:var(--text-3);margin-top:2px;display:none;"></div>
+        <div style="display:flex;align-items:center;gap:14px;margin-top:8px;">
+          <div id="join-preview-members" style="font-size:.78rem;color:var(--text-3);display:flex;align-items:center;gap:5px;"></div>
+        </div>
+        <div id="join-preview-status" style="margin-top:10px;font-size:.78rem;font-weight:600;"></div>
       </div>
-      <div id="join-preview-status" style="margin-left:auto;font-size:.72rem;font-weight:600;"></div>
     </div>
     <div id="join-error" style="display:none;margin-top:12px;padding:10px 14px;background:rgba(244,63,94,.08);border:1px solid rgba(244,63,94,.2);border-radius:8px;color:var(--red);font-size:.82rem;">
       Invalid or expired code. Check it and try again.
@@ -1186,10 +1218,12 @@ input[type=color]{width:32px;height:32px;border:none;border-radius:var(--r-xs);c
 
 <!-- INVITE PEOPLE MODAL -->
 <div class="modal-overlay" id="invite-people-modal" style="z-index:1050;">
-  <div class="modal" style="width:480px;">
-    <button class="close-btn" onclick="closeModal('invite-people-modal')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;">
-      <div id="inv-server-icon" style="width:44px;height:44px;border-radius:12px;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:1.2rem;font-weight:700;color:#fff;flex-shrink:0;overflow:hidden;"></div>
+  <div class="modal" style="width:480px;padding:0;overflow:hidden;">
+    <button class="close-btn" onclick="closeModal('invite-people-modal')" style="z-index:2;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    <div id="inv-banner" style="height:80px;background:linear-gradient(135deg,var(--accent),var(--accent-g));background-size:cover;background-position:center;"></div>
+    <div style="padding:24px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;margin-top:-28px;">
+      <div id="inv-server-icon" style="width:56px;height:56px;border-radius:14px;border:3px solid var(--bg-2);background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:1.4rem;font-weight:700;color:#fff;flex-shrink:0;overflow:hidden;"></div>
       <div>
         <h2 style="margin-bottom:2px;"><span data-i18n="Invitar a">Invitar a</span> <span id="inv-server-name"><span data-i18n="esta comunidad">esta comunidad</span></span></h2>
         <p class="sub" style="margin:0;"><span data-i18n="Comparte el código o enlace para invitar personas.">Comparte el código o enlace para invitar personas.</span></p>
@@ -1202,7 +1236,7 @@ input[type=color]{width:32px;height:32px;border:none;border-radius:var(--r-xs);c
       <span id="inv-code-text" style="font-size:1.05rem;letter-spacing:.08em;font-weight:700;"></span>
       <button class="btn btn-ghost btn-sm" onclick="copyInviteNew()">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-        Copiar
+        Copy
       </button>
     </div>
 
@@ -1212,7 +1246,7 @@ input[type=color]{width:32px;height:32px;border:none;border-radius:var(--r-xs);c
       <input type="text" id="inv-link-text" readonly style="flex:1;font-family:monospace;font-size:.78rem;color:var(--accent-g);cursor:text;" onclick="this.select()">
       <button class="btn btn-ghost btn-sm" onclick="copyInviteLink()">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-        Copiar
+        Copy
       </button>
     </div>
 
@@ -1237,9 +1271,10 @@ input[type=color]{width:32px;height:32px;border:none;border-radius:var(--r-xs);c
     <div style="display:flex;gap:8px;margin-top:16px;">
       <button class="btn btn-ghost btn-sm" onclick="regenerateInviteNew()" style="font-size:.78rem;">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-        Regenerar código
+        Regenerate code
       </button>
       <button class="btn btn-primary" style="margin-left:auto;" onclick="closeModal('invite-people-modal')"><span data-i18n="Listo">Listo</span></button>
+    </div>
     </div>
   </div>
 </div>
@@ -4020,6 +4055,12 @@ async function checkAndPruneChannel(channelId,dbPathPrefix){
     const oldList=Object.values(oldSnap.val());
     const deletable=oldList.filter(m=>!m.pinned);
     for(const m of deletable){
+      // Best-effort: try to delete the Supabase file first. If it fails (network
+      // hiccup, already gone, etc.) deleteFromSupabaseStorage() logs a warning
+      // and swallows the error rather than blocking — we still go ahead and
+      // remove the Firebase record either way, so cleanup keeps making
+      // progress instead of getting stuck retrying the same message forever.
+      await deleteMessageSupabaseFiles(m);
       try{await fbRemove(dbPath+'/'+m.id);}catch(e){}
     }
   }catch(e){console.warn('[cleanup] error pruning channel',e);}
@@ -4413,26 +4454,26 @@ function renderChannelsPanel(){
     const friendsActive=!state.currentChannelId;
     list.innerHTML=`
       <div style="padding:8px;">
-        <input type="text" id="dm-search-input" placeholder="Buscar o iniciar una conversación" data-i18n-placeholder="Buscar o iniciar una conversación" value="${(state.dmSearchQuery||'').replace(/"/g,'&quot;')}" oninput="state.dmSearchQuery=this.value;clearTimeout(window._dmSearchDebounce);window._dmSearchDebounce=setTimeout(()=>{renderChannelsPanel();const i=document.getElementById('dm-search-input');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length);}},180);">
+        <input type="text" id="dm-search-input" placeholder="Search or start a conversation" data-i18n-placeholder="Search or start a conversation" value="${(state.dmSearchQuery||'').replace(/"/g,'&quot;')}" oninput="state.dmSearchQuery=this.value;clearTimeout(window._dmSearchDebounce);window._dmSearchDebounce=setTimeout(()=>{renderChannelsPanel();const i=document.getElementById('dm-search-input');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length);}},180);">
       </div>
       <div class="dm-nav-item${friendsActive?' active':''}" onclick="openFriendsPage()" style="position:relative;">
         <div class="member-avatar" style="background:var(--bg-4);width:30px;height:30px;color:var(--text-1);"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span id="friends-notif" style="display:none;position:absolute;top:-1px;right:-1px;width:9px;height:9px;border-radius:50%;background:var(--red);border:2px solid var(--bg-1);"></span></div>
-        <div style="font-size:.875rem;font-weight:600;">Amigos</div>
+        <div style="font-size:.875rem;font-weight:600;">Friends</div>
       </div>
       <div class="dm-nav-item" onclick="openFriendsPage('pending')" style="position:relative;">
         <div class="member-avatar" style="background:var(--bg-4);width:30px;height:30px;color:var(--text-1);"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M4 4h16v16H4z" fill="none" stroke="none"/><path d="M22 6l-10 7L2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg></div>
-        <div style="font-size:.875rem;font-weight:600;">Solicitudes de mensajes</div>
+        <div style="font-size:.875rem;font-weight:600;">Message Requests</div>
       </div>
       <div class="dm-nav-item" onclick="openStoreProgress()" style="position:relative;">
         <div class="member-avatar" style="background:var(--bg-4);width:30px;height:30px;color:#a78bfa;">🏆</div>
-        <div style="font-size:.875rem;font-weight:600;">Tienda</div>
-        <span style="margin-left:auto;font-size:.6rem;font-weight:700;background:var(--accent);color:#fff;padding:1px 6px;border-radius:6px;">NUEVO</span>
+        <div style="font-size:.875rem;font-weight:600;">Store</div>
+        <span style="margin-left:auto;font-size:.6rem;font-weight:700;background:var(--accent);color:#fff;padding:1px 6px;border-radius:6px;">NEW</span>
       </div>
       <div class="dm-nav-item" onclick="openRewards()" style="position:relative;">
         <div class="member-avatar" style="background:var(--bg-4);width:30px;height:30px;color:#ffd76a;">🎁</div>
         <div style="font-size:.875rem;font-weight:600;">Rewards</div>
       </div>
-      <div style="padding:10px 14px 6px;font-size:.68rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);">Mensajes directos</div>
+      <div style="padding:10px 14px 6px;font-size:.68rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);">Direct Messages</div>
     `;
     updateFriendBadge();
     if(!dms.length){
@@ -4443,9 +4484,15 @@ function renderChannelsPanel(){
       const dmId=getDMId(state.currentUser.uid,uid);
       const key='dm_'+dmId;
       const unread=state.unreadCounts[key]||0;
+      // Same staleness fix as elsewhere: info (from state.dmConversations) is a
+      // snapshot saved the last time either side sent a message — prefer live
+      // presence data so a changed photo/name shows up without needing a new message.
+      const live=state.onlineUsers[uid];
+      const displayName=live?.name||info.name||'?';
+      const displayAvatarUrl=live?.avatarUrl||info.avatarUrl;
       const div=document.createElement('div');
       div.className='dm-item'+(state.currentChannelId===key?' active':'');
-      div.innerHTML=`<div class="member-avatar" style="background:${getAutoAvatarColor(uid||info.name)};width:32px;height:32px;">${info.avatarUrl?`<img src="${info.avatarUrl}" onerror="this.style.display='none'">`:(info.name||'?')[0].toUpperCase()}</div><div style="flex:1;min-width:0;"><div style="font-size:.875rem;color:var(--text-1);font-weight:600;">${info.name||'?'}</div><div style="font-size:.75rem;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${info.lastMsg||''}</div></div>${unread?`<div class="dm-unread">${unread}</div>`:''}`;
+      div.innerHTML=`<div class="member-avatar" style="background:${getAutoAvatarColor(uid||displayName)};width:32px;height:32px;">${displayAvatarUrl?`<img src="${displayAvatarUrl}" onerror="this.style.display='none'">`:(displayName||'?')[0].toUpperCase()}</div><div style="flex:1;min-width:0;"><div style="font-size:.875rem;color:var(--text-1);font-weight:600;">${displayName}</div><div style="font-size:.75rem;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${info.lastMsg||''}</div></div>${unread?`<div class="dm-unread">${unread}</div>`:''}`;
       div.onclick=()=>openDM(uid);
       list.appendChild(div);
     });
@@ -5395,6 +5442,8 @@ async function deleteMsg(id){
     if(!isOwner){showToast(t("🛡️ Este es un canal protegido — los mensajes no se pueden borrar"));return;}
   }
   if(!(await cmtrConfirm('Delete this message? This action can\'t be undone.',{danger:true,okText:'Delete'})))return;
+  const msgObj=(state.messages[ch]||[]).find(m=>m.id===id);
+  await deleteMessageSupabaseFiles(msgObj);
   fbRemove(isDM?'dmMessages/'+ch.replace('dm_','')+'/'+id:'state/messages/'+ch+'/'+id);
   if(state.messages[ch])state.messages[ch]=state.messages[ch].filter(m=>m.id!==id);
   renderMessages();
@@ -5674,13 +5723,20 @@ function renderFriendsPage(tab){
     const isAccepted=f.status==='accepted';
     const label=f.status==='pending'?'Request sent':(f.status==='incoming'?'Request received':(STATUS_LABEL[st]||'Offline'));
     const color=STATUS_COLORS[st]||STATUS_COLORS.offline;
+    // Same staleness fix as the server members panel: f.avatarUrl/f.name come
+    // from a snapshot saved in state.friends at the time the friendship was
+    // last touched, and never updates again on its own. Prefer live presence
+    // data (state.onlineUsers) when available so a changed photo/name shows
+    // up here immediately instead of staying stuck on the old one.
+    const displayName=live?.name||f.name||'?';
+    const displayAvatarUrl=live?.avatarUrl||f.avatarUrl;
     return `<div class="friend-row">
       <div style="position:relative;flex-shrink:0;" onclick="showProfilePopupByUid(event,'${uid}',null)">
-        <div class="member-avatar" style="background:${getAutoAvatarColor(uid||f.name)};width:36px;height:36px;">${f.avatarUrl?`<img src="${f.avatarUrl}" onerror="this.style.display='none'">`:(f.name||'?')[0].toUpperCase()}</div>
+        <div class="member-avatar" style="background:${getAutoAvatarColor(uid||displayName)};width:36px;height:36px;">${displayAvatarUrl?`<img src="${displayAvatarUrl}" onerror="this.style.display='none'">`:(displayName||'?')[0].toUpperCase()}</div>
         ${isAccepted?`<div style="position:absolute;bottom:-2px;right:-2px;width:11px;height:11px;border-radius:50%;background:${color};border:2.5px solid var(--bg-2);"></div>`:''}
       </div>
       <div style="flex:1;min-width:0;cursor:pointer;" onclick="showProfilePopupByUid(event,'${uid}',null)">
-        <div style="font-size:.875rem;font-weight:600;color:var(--text-0);">${f.name||'?'}</div>
+        <div style="font-size:.875rem;font-weight:600;color:var(--text-0);">${displayName}</div>
         <div style="font-size:.72rem;color:var(--text-3);">${label}</div>
       </div>
       <div style="display:flex;gap:4px;flex-shrink:0;">
@@ -5884,7 +5940,22 @@ async function deleteChannel(chId,srvId){
   if(!hasPermission(state.currentUser.uid,'manage_channels')){showToast(t("⚠️ No tienes permiso para eliminar canales en este servidor"));return;}
   if(!(await cmtrConfirm('Delete channel?',{danger:true,okText:'Delete'})))return;
   srv.channels.forEach(cat=>{cat.children=(cat.children||[]).filter(c=>c.id!==chId);});
-  saveServers();if(state.currentChannelId===chId)state.currentChannelId=null;renderAll();showToast(t("<svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"3 6 5 6 21 6\"/><path d=\"M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6\"/><path d=\"M10 11v6\"/><path d=\"M14 11v6\"/><path d=\"M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2\"/></svg> Canal eliminado"));
+  saveServers();if(state.currentChannelId===chId)state.currentChannelId=null;renderAll();showToast(t("<svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"3 6 5 6 21 6\"/><path d=\"M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6\"/><path d=\"M10 11v6\"/><path d=\"M14 11v6\"/><path d=\"M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2\"/></svg> Channel deleted"));
+  // This used to only remove the channel from srv.channels, leaving
+  // state/messages/{chId} — and every image/file/audio it referenced in
+  // Supabase Storage — orphaned in Firebase forever with nothing pointing to
+  // it. Now the whole message history for the channel is fetched, each
+  // message's Supabase files are deleted, then the entire node is removed.
+  (async()=>{
+    try{
+      const snap=await fbGet('state/messages/'+chId);
+      if(snap&&snap.exists()){
+        const msgs=Object.values(snap.val());
+        for(const m of msgs){ await deleteMessageSupabaseFiles(m); }
+      }
+      await fbRemove('state/messages/'+chId);
+    }catch(e){ console.warn('[deleteChannel] cleanup error',e); }
+  })();
 }
 
 // ── SERVERS ──
@@ -6100,7 +6171,9 @@ function openServerSettings(){
   const prevIcon=document.getElementById('ss-preview-icon');
   if(srv.iconImg){prevIcon.innerHTML=`<img src="${srv.iconImg}" style="width:100%;height:100%;object-fit:cover;">`;}
   else{prevIcon.textContent=srv.icon||(srv.name[0]||'?');prevIcon.style.background=srv.color||'var(--accent)';}
-  document.getElementById('ss-preview-banner').style.background=`linear-gradient(135deg,${srv.color||'var(--accent)'},var(--accent-g))`;
+  const ssPrevBanner=document.getElementById('ss-preview-banner');
+  if(srv.bannerUrl){ssPrevBanner.style.background='';ssPrevBanner.style.backgroundImage=`url(${srv.bannerUrl})`;ssPrevBanner.style.backgroundSize='cover';ssPrevBanner.style.backgroundPosition='center';}
+  else{ssPrevBanner.style.backgroundImage='';ssPrevBanner.style.background=`linear-gradient(135deg,${srv.color||'var(--accent)'},var(--accent-g))`;}
   // Tags
   renderSsTags(srv.tags||[]);
   // Invite code
@@ -7192,26 +7265,42 @@ function previewJoinServer(code) {
   const srv = state.servers.find(s => s.inviteCode === code);
   if (!srv) { preview.style.display = 'none'; return; }
   const alreadyIn = (srv.members || []).find(m => (m.uid || m.id) === state.currentUser.uid);
+  // Banner — falls back to a gradient (same as the server settings preview)
+  // when the server hasn't set one, so the card never looks broken/empty.
+  const bannerEl = document.getElementById('join-preview-banner');
+  if (srv.bannerUrl) { bannerEl.style.background=''; bannerEl.style.backgroundImage=`url(${srv.bannerUrl})`; bannerEl.style.backgroundSize='cover'; bannerEl.style.backgroundPosition='center'; }
+  else { bannerEl.style.backgroundImage=''; bannerEl.style.background=`linear-gradient(135deg,${srv.color||'var(--accent)'},var(--accent-g))`; }
   const iconEl = document.getElementById('join-preview-icon');
-  if (srv.icon && srv.icon.startsWith('data:')) {
+  if (srv.iconImg) {
+    iconEl.innerHTML = `<img src="${srv.iconImg}" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;">`;
+    iconEl.style.background='#000';
+  } else if (srv.icon && srv.icon.startsWith('data:')) {
     iconEl.innerHTML = `<img src="${srv.icon}" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;">`;
+    iconEl.style.background='#000';
   } else {
     iconEl.textContent = srv.icon || srv.name[0].toUpperCase();
     iconEl.style.background = srv.color || 'var(--accent)';
   }
   document.getElementById('join-preview-name').textContent = srv.name;
-  document.getElementById('join-preview-members').textContent = (srv.members || []).length + ' member' + ((srv.members || []).length !== 1 ? 's' : '');
+  const descEl = document.getElementById('join-preview-desc');
+  if (srv.desc) { descEl.textContent = srv.desc; descEl.style.display = 'block'; }
+  else { descEl.style.display = 'none'; }
+  const memberCount=(srv.members || []).length;
+  const onlineCount=(srv.members||[]).filter(m=>state.onlineUsers[m.uid||m.id]).length;
+  document.getElementById('join-preview-members').innerHTML =
+    `<span style="width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;"></span>${onlineCount} online`+
+    `<span style="margin-left:10px;color:var(--text-4);">${memberCount} member${memberCount!==1?'s':''}</span>`;
   const statusEl = document.getElementById('join-preview-status');
-  const typeLabel={'public':'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> Pública','private':'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Privada','request':'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg> Por solicitud'}[srv.serverType||'public'];
+  const typeLabel={'public':'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> Public','private':'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Private','request':'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg> Request only'}[srv.serverType||'public'];
   if (alreadyIn) {
     statusEl.innerHTML = '<span style="color:var(--green)">✓ You\'re already a member</span> &nbsp;<span style="font-size:.7rem;color:var(--text-3)">'+typeLabel+'</span>';
   } else if (isUserBanned(srv, state.currentUser.uid)) {
     statusEl.innerHTML = '<span style="color:var(--red)">⛔ You were banned from this server</span>';
   } else {
-    statusEl.innerHTML = (srv.serverType==='request'?'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg> Solicitar acceso':'+ Unirse')+'&nbsp;<span style="font-size:.7rem;color:var(--text-3)">'+typeLabel+'</span>';
+    statusEl.innerHTML = (srv.serverType==='request'?'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg> Request access':'+ Join')+'&nbsp;<span style="font-size:.7rem;color:var(--text-3)">'+typeLabel+'</span>';
     statusEl.style.color = 'var(--accent-g)';
   }
-  preview.style.display = 'flex';
+  preview.style.display = 'block';
 }
 function joinByInviteNew() {
   const code = document.getElementById('join-code-input').value.trim();
@@ -7265,10 +7354,21 @@ function openInvitePeopleModal() {
   const srv = getServer(state.currentServerId);
   if (!srv) { showToast(t("⚠️ Selecciona un servidor primero")); return; }
   if (!srv.inviteCode) { srv.inviteCode = genId(8); saveServers(); }
+  // Banner preview — so admins can see exactly what people will see on the
+  // invite/join card before sharing the link (same banner as join-preview).
+  const bannerEl = document.getElementById('inv-banner');
+  if (bannerEl) {
+    if (srv.bannerUrl) { bannerEl.style.background=''; bannerEl.style.backgroundImage=`url(${srv.bannerUrl})`; bannerEl.style.backgroundSize='cover'; bannerEl.style.backgroundPosition='center'; }
+    else { bannerEl.style.backgroundImage=''; bannerEl.style.background=`linear-gradient(135deg,${srv.color||'var(--accent)'},var(--accent-g))`; }
+  }
   // Server icon
   const iconEl = document.getElementById('inv-server-icon');
-  if (srv.icon && srv.icon.startsWith('data:')) {
+  if (srv.iconImg) {
+    iconEl.innerHTML = `<img src="${srv.iconImg}" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;">`;
+    iconEl.style.background='#000';
+  } else if (srv.icon && srv.icon.startsWith('data:')) {
     iconEl.innerHTML = `<img src="${srv.icon}" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;">`;
+    iconEl.style.background='#000';
   } else {
     iconEl.textContent = srv.icon || srv.name[0].toUpperCase();
     iconEl.style.background = srv.color || 'var(--accent)';
@@ -7286,15 +7386,20 @@ function openInvitePeopleModal() {
     row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:8px;transition:background .1s;';
     row.onmouseover = () => row.style.background = 'var(--bg-3)';
     row.onmouseout = () => row.style.background = '';
-    const bg = m.avatarUrl ? '#000' : getAutoAvatarColor((m.uid||m.id)||m.name);
-    const ava = m.avatarUrl ? `<img src="${m.avatarUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;" onerror="this.style.display='none'">` : (m.name || '?')[0].toUpperCase();
+    // Same staleness fix as everywhere else: prefer live presence data over
+    // the member snapshot stored in srv.members.
+    const live = (m.uid||m.id)===state.currentUser.uid ? state.currentUser : state.onlineUsers[m.uid||m.id];
+    const displayName = (live&&live.name)||m.name||'?';
+    const displayAvatarUrl = (live&&live.avatarUrl)||m.avatarUrl;
+    const bg = displayAvatarUrl ? '#000' : getAutoAvatarColor((m.uid||m.id)||displayName);
+    const ava = displayAvatarUrl ? `<img src="${displayAvatarUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;" onerror="this.style.display='none'">` : (displayName || '?')[0].toUpperCase();
     row.innerHTML = `
       <div style="width:32px;height:32px;border-radius:10px;background:${bg};display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;flex-shrink:0;overflow:hidden;">${ava}</div>
       <div style="flex:1;min-width:0;">
-        <div style="font-size:.85rem;font-weight:600;color:var(--text-0);">${m.name || '?'}${isMe ? ` <span style="font-size:.62rem;color:var(--accent-g);">(${currentLang==='en'?'you':'tú'})</span>` : ''}</div>
+        <div style="font-size:.85rem;font-weight:600;color:var(--text-0);">${displayName}${isMe ? ` <span style="font-size:.62rem;color:var(--accent-g);">(${currentLang==='en'?'you':'tú'})</span>` : ''}</div>
         <div style="font-size:.7rem;color:var(--text-3);">${(m.roles || [])[0] || 'Member'}</div>
       </div>
-      ${!isMe ? `<button class="btn btn-ghost btn-sm" style="font-size:.72rem;" onclick="showToast('${(currentLang==='en'?`Invitation sent to ${m.name}`:`Invitación enviada a ${m.name}`).replace(/'/g,"\\'")}')">${currentLang==='en'?'Mention':'Mencionar'}</button>` : ''}`;
+      ${!isMe ? `<button class="btn btn-ghost btn-sm" style="font-size:.72rem;" onclick="showToast('${(currentLang==='en'?`Invitation sent to ${displayName}`:`Invitación enviada a ${displayName}`).replace(/'/g,"\\'")}')">${currentLang==='en'?'Mention':'Mencionar'}</button>` : ''}`;
     membersEl.appendChild(row);
   });
   openModal('invite-people-modal');
@@ -9518,12 +9623,15 @@ function renderFriendsList(){
   if(!list.length){if(empty)empty.style.display='';return;}
   if(empty)empty.style.display='none';
   list.forEach(([uid,f])=>{
+    const live=state.onlineUsers[uid];
+    const displayName=live?.name||f.name||'?';
+    const displayAvatarUrl=live?.avatarUrl||f.avatarUrl;
     const div=document.createElement('div');
     div.style.cssText='display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg-3);border-radius:var(--r-sm);';
-    div.innerHTML=`<div class="member-avatar" style="background:${getAutoAvatarColor(uid||f.name)};width:36px;height:36px;">${f.avatarUrl?`<img src="${f.avatarUrl}" onerror="this.style.display='none'">`:(f.name||'?')[0].toUpperCase()}</div>
-      <div style="flex:1;min-width:0;"><div style="font-size:.875rem;font-weight:600;color:var(--text-0);">${f.name||'?'}</div><div style="font-size:.72rem;color:var(--text-3);">@${f.handle||'?'}</div></div>
+    div.innerHTML=`<div class="member-avatar" style="background:${getAutoAvatarColor(uid||displayName)};width:36px;height:36px;">${displayAvatarUrl?`<img src="${displayAvatarUrl}" onerror="this.style.display='none'">`:(displayName||'?')[0].toUpperCase()}</div>
+      <div style="flex:1;min-width:0;"><div style="font-size:.875rem;font-weight:600;color:var(--text-0);">${displayName}</div><div style="font-size:.72rem;color:var(--text-3);">@${f.handle||'?'}</div></div>
       <button class="btn btn-ghost btn-sm" onclick="openDM('${uid}');closeModal('friends-modal')">DM</button>
-      <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="removeFriend('${uid}')">Eliminar</button>`;
+      <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="removeFriend('${uid}')">Remove</button>`;
     el.appendChild(div);
   });
 }
