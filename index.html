@@ -2679,7 +2679,7 @@ async function renderRewardsDailyTab(){
     el.innerHTML='<div style="text-align:center;padding:20px;">'+t('🔒 Activá Communiter Store primero para ver tu progreso.')+'</div>';
     return;
   }
-  el.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-3);">Cargando...</div>';
+  el.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-3);">Loading...</div>';
   const uid=state.currentUser.uid;
   const [status,adCount]=await Promise.all([
     window.Store.getDailyClaimStatus(uid),
@@ -2698,28 +2698,28 @@ async function renderRewardsDailyTab(){
   el.innerHTML=`
     <div style="text-align:center;padding:18px;background:var(--bg-2);border:1px solid var(--border);border-radius:12px;margin-bottom:14px;">
       <div style="font-size:2rem;margin-bottom:4px;">${canClaim?'🎁':'✅'}</div>
-      <div style="font-weight:700;color:var(--text-0);font-size:1rem;margin-bottom:2px;">${canClaim?'Recompensa disponible':'Ya la reclamaste hoy'}</div>
-      <div style="font-size:.78rem;color:var(--text-3);margin-bottom:14px;">Racha actual: ${currentStreak} día${currentStreak===1?'':'s'} ${currentStreak>0?'🔥':''}</div>
-      <button class="btn btn-primary" ${canClaim?'':'disabled style="opacity:.5;cursor:not-allowed;"'} onclick="claimDailyReward()">${canClaim?`Reclamar +${nextAmount} 🪙`:'Volvé mañana'}</button>
+      <div style="font-weight:700;color:var(--text-0);font-size:1rem;margin-bottom:2px;">${canClaim?'Reward available':'Already claimed today'}</div>
+      <div style="font-size:.78rem;color:var(--text-3);margin-bottom:14px;">Current streak: ${currentStreak} day${currentStreak===1?'':'s'} ${currentStreak>0?'🔥':''}</div>
+      <button class="btn btn-primary" ${canClaim?'':'disabled style="opacity:.5;cursor:not-allowed;"'} onclick="claimDailyReward()">${canClaim?`Claim +${nextAmount} 🪙`:'Come back tomorrow'}</button>
     </div>
     <div style="display:flex;align-items:center;gap:10px;padding:14px;background:var(--bg-2);border:1px solid var(--border);border-radius:12px;">
       <div style="font-size:1.5rem;">📺</div>
       <div style="flex:1;">
-        <div style="font-weight:600;color:var(--text-0);font-size:.85rem;">Ver un anuncio</div>
-        <div style="font-size:.72rem;color:var(--text-3);">Opcional — ${adCount}/${AD_MAX} hoy. +25 🪙 cada uno.</div>
+        <div style="font-weight:600;color:var(--text-0);font-size:.85rem;">Watch an ad</div>
+        <div style="font-size:.72rem;color:var(--text-3);">Optional — ${adCount}/${AD_MAX} today. +25 🪙 each.</div>
       </div>
-      <button class="btn btn-ghost btn-sm" ${adCount>=AD_MAX?'disabled style="opacity:.5;cursor:not-allowed;"':''} onclick="watchAdForCoins()">Ver anuncio</button>
+      <button class="btn btn-ghost btn-sm" ${adCount>=AD_MAX?'disabled style="opacity:.5;cursor:not-allowed;"':''} onclick="watchAdForCoins()">Watch ad</button>
     </div>
   `;
 }
 async function claimDailyReward(){
   const res=await window.Store.claimDailyReward(state.currentUser.uid);
   if(res&&res.success){
-    showToast(`🎉 +${res.amount} Communicoins — racha de ${res.streak} día${res.streak===1?'':'s'}`);
+    showToast(`🎉 +${res.amount} Communicoins — ${res.streak} day${res.streak===1?'':'s'} streak`);
   }else if(res&&res.error==='too_soon'){
-    showToast('⏳ Ya reclamaste tu recompensa de hoy');
+    showToast('⏳ You already claimed today\'s reward');
   }else{
-    showToast('⚠️ No se pudo reclamar la recompensa');
+    showToast('⚠️ Couldn\'t claim the reward');
   }
   renderRewardsDailyTab();
 }
@@ -2727,8 +2727,8 @@ async function watchAdForCoins(){
   showRewardsAdPlaceholder(async()=>{
     const res=await window.Store.claimAdReward(state.currentUser.uid);
     if(res&&res.success)showToast(`✅ +${res.amount} Communicoins`);
-    else if(res&&res.error==='daily_limit_reached')showToast('⚠️ Ya llegaste al máximo de anuncios de hoy');
-    else showToast('⚠️ No se pudo procesar');
+    else if(res&&res.error==='daily_limit_reached')showToast('⚠️ You already reached today\'s ad limit');
+    else showToast('⚠️ Couldn\'t process it');
     renderRewardsDailyTab();
   });
 }
@@ -2766,19 +2766,19 @@ const REWARDS_APPROVAL_COINS=200;
 function renderRewardsSubmitTab(){
   const el=document.getElementById('rewards-content');
   el.innerHTML=`
-    <p style="font-size:.78rem;color:var(--text-3);margin-bottom:14px;">Mandá tu diseño para el catálogo de Communiter+. Si se aprueba, ganás ${REWARDS_APPROVAL_COINS} 🪙 y tu creación queda disponible para toda la comunidad.</p>
-    <div class="form-group"><label>Tipo</label>
+    <p style="font-size:.78rem;color:var(--text-3);margin-bottom:14px;">Submit your design for the Communiter+ catalog. If it gets approved, you earn ${REWARDS_APPROVAL_COINS} 🪙 and your creation becomes available to the whole community.</p>
+    <div class="form-group"><label>Type</label>
       <select id="rw-sub-type" class="fi" onchange="renderRewardsSubmitFields()">
-        <option value="avatarFrame">Marco de avatar</option>
-        <option value="nameplate">Placa de nombre</option>
-        <option value="effect">Efecto de perfil</option>
+        <option value="avatarFrame">Avatar frame</option>
+        <option value="nameplate">Nameplate</option>
+        <option value="effect">Profile effect</option>
       </select>
     </div>
-    <div class="form-group"><label>Nombre *</label><input type="text" id="rw-sub-label" class="fi" placeholder="Mi diseño"></div>
-    <div class="form-group"><label>Categoría (opcional)</label><input type="text" id="rw-sub-category" class="fi" placeholder="Temporada, evento..."></div>
+    <div class="form-group"><label>Name *</label><input type="text" id="rw-sub-label" class="fi" placeholder="My design"></div>
+    <div class="form-group"><label>Category (optional)</label><input type="text" id="rw-sub-category" class="fi" placeholder="Season, event..."></div>
     <div id="rw-sub-fields"></div>
-    <div class="form-group"><label>Comentario para el moderador (opcional)</label><textarea id="rw-sub-note" class="fi" rows="2" placeholder="Cualquier detalle que quieras agregar..."></textarea></div>
-    <button class="btn btn-primary" style="width:100%;" onclick="submitCosmetic()">Enviar a revisión</button>
+    <div class="form-group"><label>Note for the moderator (optional)</label><textarea id="rw-sub-note" class="fi" rows="2" placeholder="Any detail you'd like to add..."></textarea></div>
+    <button class="btn btn-primary" style="width:100%;" onclick="submitCosmetic()">Submit for review</button>
   `;
   renderRewardsSubmitFields();
 }
@@ -2787,13 +2787,13 @@ function renderRewardsSubmitFields(){
   const el=document.getElementById('rw-sub-fields');
   if(type==='avatarFrame'){
     el.innerHTML=`
-      <div class="form-group"><label>Imagen (PNG con transparencia) — subir archivo</label><input type="file" id="rw-sub-image-file" class="fi" accept="image/*" onchange="handleRewardsImageFile(this)"></div>
-      <div class="form-group"><label>...o pegar URL</label><input type="url" id="rw-sub-image" class="fi" placeholder="https://..."></div>
-      <div class="form-group"><label>Vista previa</label><img id="rw-sub-preview" src="" style="width:70px;height:70px;object-fit:contain;display:none;background:var(--bg-3);border-radius:8px;" onload="this.style.display='block'" onerror="this.style.display='none'"></div>`;
+      <div class="form-group"><label>Image (PNG with transparency) — upload file</label><input type="file" id="rw-sub-image-file" class="fi" accept="image/*" onchange="handleRewardsImageFile(this)"></div>
+      <div class="form-group"><label>...or paste a URL</label><input type="url" id="rw-sub-image" class="fi" placeholder="https://..."></div>
+      <div class="form-group"><label>Preview</label><img id="rw-sub-preview" src="" style="width:70px;height:70px;object-fit:contain;display:none;background:var(--bg-3);border-radius:8px;" onload="this.style.display='block'" onerror="this.style.display='none'"></div>`;
   }else if(type==='nameplate'){
-    el.innerHTML=`<div class="form-group"><label>Colores del degradé</label><div style="display:flex;gap:10px;"><input type="color" id="rw-sub-color1" value="#ff512f" style="width:56px;height:38px;"><input type="color" id="rw-sub-color2" value="#dd2476" style="width:56px;height:38px;"></div></div>`;
+    el.innerHTML=`<div class="form-group"><label>Gradient colors</label><div style="display:flex;gap:10px;"><input type="color" id="rw-sub-color1" value="#ff512f" style="width:56px;height:38px;"><input type="color" id="rw-sub-color2" value="#dd2476" style="width:56px;height:38px;"></div></div>`;
   }else if(type==='effect'){
-    el.innerHTML=`<div class="form-group"><label>Color del brillo</label><input type="color" id="rw-sub-color1" value="#7c3aed" style="width:56px;height:38px;"></div>`;
+    el.innerHTML=`<div class="form-group"><label>Glow color</label><input type="color" id="rw-sub-color1" value="#7c3aed" style="width:56px;height:38px;"></div>`;
   }
 }
 function handleRewardsImageFile(input){
@@ -2809,17 +2809,17 @@ function handleRewardsImageFile(input){
 async function submitCosmetic(){
   const type=document.getElementById('rw-sub-type').value;
   const label=document.getElementById('rw-sub-label').value.trim();
-  if(!label){showToast('⚠️ Ponele un nombre');return;}
+  if(!label){showToast('⚠️ Give it a name');return;}
   const category=document.getElementById('rw-sub-category').value.trim();
   const note=document.getElementById('rw-sub-note').value.trim();
   const sub={
     id:'sub_'+Date.now()+'_'+Math.random().toString(36).slice(2,8),
-    uid:state.currentUser.uid,submitterName:state.currentUser.name||state.currentUser.displayName||'Usuario',
+    uid:state.currentUser.uid,submitterName:state.currentUser.name||state.currentUser.displayName||'User',
     type,label,category,note,status:'pending',submittedAt:Date.now()
   };
   if(type==='avatarFrame'){
     sub.imageUrl=document.getElementById('rw-sub-image').value.trim();
-    if(!sub.imageUrl){showToast('⚠️ Subí una imagen o pegá una URL');return;}
+    if(!sub.imageUrl){showToast('⚠️ Upload an image or paste a URL');return;}
   }else if(type==='nameplate'){
     sub.color1=document.getElementById('rw-sub-color1').value;
     sub.color2=document.getElementById('rw-sub-color2').value;
@@ -2828,20 +2828,20 @@ async function submitCosmetic(){
   }
   try{
     await fbSet('rewards/submissions/'+sub.id,sub);
-    showToast('✅ Enviado — te avisamos cuando lo revisen');
+    showToast('✅ Submitted — we\'ll let you know once it\'s reviewed');
     switchRewardsTab('mine');
-  }catch(err){showToast('⚠️ No se pudo enviar: '+(err?.message||err));}
+  }catch(err){showToast('⚠️ Couldn\'t submit it: '+(err?.message||err));}
 }
 
-// ── Mis envíos ──
+// ── My submissions ──
 async function renderRewardsMineTab(){
   const el=document.getElementById('rewards-content');
-  el.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-3);">Cargando...</div>';
+  el.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-3);">Loading...</div>';
   const snap=await fbGet('rewards/submissions').catch(()=>null);
   const all=snap&&snap.exists&&snap.exists()?Object.values(snap.val()):[];
   const mine=all.filter(s=>s.uid===state.currentUser.uid).sort((a,b)=>(b.submittedAt||0)-(a.submittedAt||0));
-  if(!mine.length){el.innerHTML='<div style="text-align:center;color:var(--text-3);padding:24px;">Todavía no enviaste ningún cosmético.</div>';return;}
-  const statusLabel={pending:['⏳ En revisión','var(--yellow,#faa81a)'],approved:['✅ Aprobado','var(--green,#3bc978)'],rejected:['❌ Rechazado','var(--red)']};
+  if(!mine.length){el.innerHTML='<div style="text-align:center;color:var(--text-3);padding:24px;">You haven\'t submitted any cosmetics yet.</div>';return;}
+  const statusLabel={pending:['⏳ Under review','var(--yellow,#faa81a)'],approved:['✅ Approved','var(--green,#3bc978)'],rejected:['❌ Rejected','var(--red)']};
   el.innerHTML=mine.map(s=>{
     const[label,color]=statusLabel[s.status]||statusLabel.pending;
     return`<div style="padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--bg-2);margin-bottom:8px;">
@@ -2849,7 +2849,7 @@ async function renderRewardsMineTab(){
         <div style="font-weight:600;color:var(--text-0);font-size:.85rem;">${escapeHtml(s.label)}</div>
         <span style="font-size:.7rem;font-weight:700;color:${color};">${label}</span>
       </div>
-      <div style="font-size:.72rem;color:var(--text-3);margin-top:2px;">${s.type==='avatarFrame'?'Marco':s.type==='nameplate'?'Placa':'Efecto'} · ${fmtDateTime(s.submittedAt)}</div>
+      <div style="font-size:.72rem;color:var(--text-3);margin-top:2px;">${s.type==='avatarFrame'?'Frame':s.type==='nameplate'?'Nameplate':'Effect'} · ${fmtDateTime(s.submittedAt)}</div>
       ${s.reviewNote?`<div style="font-size:.75rem;color:var(--text-2);margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">💬 ${escapeHtml(s.reviewNote)}</div>`:''}
     </div>`;
   }).join('');
@@ -3347,6 +3347,45 @@ async function initUserProfile(firebaseUser,displayName,photoURL){
     await fbSet('users/'+uid,profile);
     if(eKey)await fbSet('usersByEmail/'+eKey,profile);
   }
+  // 4. Self-heal: the profile now DOES exist under users/{uid}, but it might
+  // still be missing individual fields (avatarUrl, bannerUrl, tag, etc.) —
+  // e.g. from before fbUpdate replaced the fbSet(...) full-overwrite bug in
+  // saveUserSettings, which used to silently wipe out any field it didn't
+  // explicitly list every time someone saved their profile. Steps 1-3 above
+  // only ever check "does users/{uid} exist at all" — a profile that exists
+  // but is missing pieces sails right past all of them. This fills in
+  // anything still missing, straight from the email backup, which is a mirror
+  // that's been kept in sync separately and may still have the complete data.
+  if(eKey)await restoreMissingProfileFieldsFromEmailBackup(uid,eKey);
+}
+// Compares users/{uid} against its usersByEmail/{eKey} mirror and copies over
+// any field that's present (truthy) in the backup but missing/empty on the
+// live profile — without touching fields the live profile already has, and
+// without touching fields the backup ALSO doesn't have (nothing to recover
+// from). Safe to call defensively any time, not just right after login.
+async function restoreMissingProfileFieldsFromEmailBackup(uid,eKey){
+  try{
+    const [liveSnap,backupSnap]=await Promise.all([fbGet('users/'+uid),fbGet('usersByEmail/'+eKey)]);
+    if(!liveSnap.exists()||!backupSnap.exists())return;
+    const live=liveSnap.val()||{};
+    const backup=backupSnap.val()||{};
+    const patch={};
+    Object.keys(backup).forEach(key=>{
+      if(key==='uid')return; // uid must always stay the CURRENT uid, never copied from the backup
+      const liveVal=live[key];
+      const missing=liveVal===undefined||liveVal===null||liveVal==='';
+      if(missing&&backup[key]!==undefined&&backup[key]!==null&&backup[key]!==''){
+        patch[key]=backup[key];
+      }
+    });
+    if(Object.keys(patch).length){
+      await fbUpdate('users/'+uid,patch);
+      if(state.currentUser&&state.currentUser.uid===uid){
+        state.currentUser={...state.currentUser,...patch};
+        updateUserBar();renderAll();
+      }
+    }
+  }catch(err){/* best-effort — never blocks login if this fails */}
 }
 
 // Migrates a user's data from an old UID to a new one (e.g. after switching projects,
@@ -3631,7 +3670,7 @@ async function onUserLoggedIn(firebaseUser){
   await withTimeout(window._fbSet(presRef,presData),5000,null);
   // Sync email backup
   const eKey=emailToKey(state.currentUser.email||'');
-  if(eKey){const snap2=await withTimeout(fbGet('users/'+state.currentUser.uid),5000,null);if(snap2&&snap2.exists?.())fbSet('usersByEmail/'+eKey,snap2.val());}
+  if(eKey){const snap2=await withTimeout(fbGet('users/'+state.currentUser.uid),5000,null);if(snap2&&snap2.exists?.())fbUpdate('usersByEmail/'+eKey,snap2.val());}
   window._fbOnDisconnect(presRef).remove();
   window._fbOnDisconnect(fbRef('typing/'+state.currentUser.uid)).remove();
   // Activity ("Playing...", "Listening to...") is ephemeral like in Discord: on
@@ -3653,8 +3692,14 @@ async function onUserLoggedIn(firebaseUser){
   });
 
   subscribePresence();
-  subscribeServers();
-  subscribeDMs();
+  // Capture these so we can actually WAIT for the first real snapshot of each
+  // before revealing the app — previously hideLoadingOverlay() only waited for
+  // prefs to load, while subscribeServers()/subscribeDMs() had merely
+  // REGISTERED their listeners (fire-and-forget), so the app could appear with
+  // an empty server bar / DM list for a moment while that first data was still
+  // in flight. See the await below, right before hideLoadingOverlay().
+  const _serversReadyPromise=subscribeServers();
+  const _dmsReadyPromise=subscribeDMs();
   subscribeTypingGlobal();
   listenFriends();
   // Auto-assign handle if user doesn't have one
@@ -3700,10 +3745,11 @@ async function onUserLoggedIn(firebaseUser){
   state.serverFolders=prefs.serverFolders||[];
   state.mutedServers=new Set(prefs.mutedServers||[]);
   state.mutedChannels=new Set(prefs.mutedChannels||[]);
+  let _channelReadyPromise=Promise.resolve();
   if(state.currentServerId!=='__dm__'){
     const srv=getServer(state.currentServerId);
     if(srv){
-      if(state.currentChannelId){subscribeChannel(state.currentChannelId);markChannelRead(state.currentChannelId);}
+      if(state.currentChannelId){_channelReadyPromise=subscribeChannel(state.currentChannelId)||Promise.resolve();markChannelRead(state.currentChannelId);}
     }
   }
 
@@ -3720,6 +3766,15 @@ async function onUserLoggedIn(firebaseUser){
   if(Array.isArray(prefs.recentEmojis)) _recentEmojis=prefs.recentEmojis;
   if(Array.isArray(prefs.serverOrder)) state.serverOrder=prefs.serverOrder;
 
+  // Wait for the servers list, the DM list, and (if a channel was about to be
+  // opened) that channel's first batch of messages to actually arrive before
+  // showing the app — this is the fix for the loading screen disappearing
+  // while everything behind it was still empty. Capped with a safety timeout
+  // so a slow/stuck connection doesn't leave someone staring at the loading
+  // screen forever; if it times out we still reveal the app (same as before
+  // this fix), it just no longer reveals it too early on a normal connection.
+  await withTimeout(Promise.all([_serversReadyPromise,_dmsReadyPromise,_channelReadyPromise]),8000,null);
+
   renderAll();updateUserBar();hideLoadingOverlay();
   spotifyTryResume();
 
@@ -3727,6 +3782,18 @@ async function onUserLoggedIn(firebaseUser){
   setInterval(()=>{
     if(state.currentUser)fbSet('presence/'+state.currentUser.uid,{uid:state.currentUser.uid,name:state.currentUser.name,avatarUrl:state.currentUser.avatarUrl||'',nameColor:state.currentUser.nameColor,status:state.currentUser.status||'online',customStatus:state.currentUser.customStatus||'',activity:state.currentUser.activity||null,ts:Date.now()});
   },25000);
+
+  // Periodic cleanup re-check for whatever channel/DM is currently open.
+  // checkAndPruneChannel() only fires when a channel is first opened in this
+  // tab session, or when the CURRENT user sends a message in it — a channel
+  // that's growing purely from OTHER people's messages while you sit in it
+  // for a long time (without you sending anything, and without reloading the
+  // page) would otherwise never get re-checked for the rest of that session.
+  setInterval(()=>{
+    if(!state.currentChannelId)return;
+    if(state.currentChannelId.startsWith('dm_'))checkAndPruneChannel(state.currentChannelId.replace('dm_',''),'dmMessages/');
+    else checkAndPruneChannel(state.currentChannelId,'state/messages/');
+  },180000);
 
   // Request notification permission
   if('Notification' in window && Notification.permission==='default'){
@@ -3800,34 +3867,47 @@ function normalizeServers(servers){
 }
 let _serversLegacyMigrationDone=false;
 function subscribeServers(){
-  fbOn('state/servers',snap=>{
-    if(snap.exists()){
-      const val=snap.val();
-      const wasArray=Array.isArray(val);
-      state.servers=normalizeServers(wasArray?val:Object.values(val||{}));
-      // Self-healing one-time migration: if the data we just read still came
-      // in the OLD array format (Firebase keys "0","1","2"...), rewrite the
-      // whole node once in the new id-keyed format. From then on, saveServers()
-      // keeps writing it correctly, but data saved before this fix needs this
-      // one nudge to actually flip the keys in Firebase — reading alone
-      // doesn't change what's stored there. Guarded so it only fires once per
-      // page load, not on every subsequent update.
-      if(wasArray&&!_serversLegacyMigrationDone){
-        _serversLegacyMigrationDone=true;
-        saveServers();
+  // Returns a promise that resolves once the FIRST snapshot has arrived (the
+  // listener keeps running normally after that, for every future change).
+  // This lets the login flow actually wait for real server data instead of
+  // hiding the loading screen the instant it merely REGISTERED the listener —
+  // which is what let the app flash an empty server bar/channel list before.
+  return new Promise(resolve=>{
+    let isFirst=true;
+    fbOn('state/servers',snap=>{
+      if(snap.exists()){
+        const val=snap.val();
+        const wasArray=Array.isArray(val);
+        state.servers=normalizeServers(wasArray?val:Object.values(val||{}));
+        // Self-healing one-time migration: if the data we just read still came
+        // in the OLD array format (Firebase keys "0","1","2"...), rewrite the
+        // whole node once in the new id-keyed format. From then on, saveServers()
+        // keeps writing it correctly, but data saved before this fix needs this
+        // one nudge to actually flip the keys in Firebase — reading alone
+        // doesn't change what's stored there. Guarded so it only fires once per
+        // page load, not on every subsequent update.
+        if(wasArray&&!_serversLegacyMigrationDone){
+          _serversLegacyMigrationDone=true;
+          saveServers();
+        }
       }
-    }
-    else state.servers=[];
-    checkServerAvatarGrandfather();
-    subscribeAllChannelsActivity();
-    renderServerBar();renderChannelsPanel();renderMembersPanel();
+      else state.servers=[];
+      checkServerAvatarGrandfather();
+      subscribeAllChannelsActivity();
+      renderServerBar();renderChannelsPanel();renderMembersPanel();
+      if(isFirst){isFirst=false;resolve();}
+    });
   });
 }
 function subscribeDMs(){
-  fbOn('dms/'+state.currentUser.uid,snap=>{
-    state.dmConversations={};
-    if(snap.exists())snap.forEach(c=>{state.dmConversations[c.key]=c.val();});
-    if(state.currentServerId==='__dm__')renderChannelsPanel();
+  return new Promise(resolve=>{
+    let isFirst=true;
+    fbOn('dms/'+state.currentUser.uid,snap=>{
+      state.dmConversations={};
+      if(snap.exists())snap.forEach(c=>{state.dmConversations[c.key]=c.val();});
+      if(state.currentServerId==='__dm__')renderChannelsPanel();
+      if(isFirst){isFirst=false;resolve();}
+    });
   });
 }
 function subscribeTypingGlobal(){
@@ -3932,7 +4012,10 @@ async function checkAndPruneChannel(channelId,dbPathPrefix){
     // delete the ones that aren't pinned. If the channel has a big excess
     // built up, this prunes in batches across successive channel openings, instead
     // of trying to fetch and delete thousands of messages all at once.
-    const oldSnap=await fbGet(window._fbQuery(baseRef,window._fbOrderByChild('ts'),window._fbLimitToFirst(50)));
+    // Bumped from 50 to 150: a channel that had been silently accumulating
+    // thousands of unpruned messages (from before these fixes existed) could
+    // take dozens of visits to fully catch up at the old batch size.
+    const oldSnap=await fbGet(window._fbQuery(baseRef,window._fbOrderByChild('ts'),window._fbLimitToFirst(150)));
     if(!oldSnap||!oldSnap.exists())return;
     const oldList=Object.values(oldSnap.val());
     const deletable=oldList.filter(m=>!m.pinned);
@@ -3952,7 +4035,8 @@ let _msgListeners={};
 const LITE_MODE_THRESHOLD=15;
 function liteModeThreshold(){ return LITE_MODE_THRESHOLD; }
 function subscribeChannel(channelId){
-  if(_msgListeners[channelId])return;
+  if(_msgListeners[channelId])return Promise.resolve();
+  return new Promise(resolve=>{
   let isFirst=true;
   checkAndPruneChannel(channelId,'state/messages/');
   const baseRef=fbRef('state/messages/'+channelId);
@@ -3982,22 +4066,23 @@ function subscribeChannel(channelId){
           state.unreadCounts[channelId]=(state.unreadCounts[channelId]||0)+1;
           renderChannelsPanel();
         }
-        const preview=m.audioData?'🎤 Voice message':(m.imageData||m.imageUrl)?'🖼️ Image':(m.fileData||m.fileUrl)?'📎 '+(m.fileName||'File'):(m.content||'').substring(0,60);
+        const preview=(m.audioData||m.audioUrl)?'🎤 Voice message':(m.imageData||m.imageUrl)?'🖼️ Image':(m.fileData||m.fileUrl)?'📎 '+(m.fileName||'File'):(m.content||'').substring(0,60);
         sendDesktopNotif(m.name, preview, m.avatarUrl||'');
       });
     }
-    isFirst=false;
+    if(isFirst){isFirst=false;resolve();}
     if(channelId===state.currentChannelId){
       renderMessages();
       // Keep lastRead up to date WHILE the channel stays open — before it only
-      // updated on entry, so any new message (yours or someone else's)
-      // llegado mientras estabas adentro dejaba lastRead desactualizado, y en
-      // by the time you left the channel it would get incorrectly marked as "unread".
+      // updated on entry, so any new message (yours or someone else's) that
+      // arrived while you were inside left lastRead stale, and by
+      // the time you left the channel it would get incorrectly marked as "unread".
       markChannelRead(channelId);
       renderChannelsPanel();renderServerBar();
     }
   });
   _msgListeners[channelId]=true;
+  });
 }
 function subscribeDMChannel(dmId){
   const key='dm_'+dmId;
@@ -4020,7 +4105,7 @@ function subscribeDMChannel(dmId){
           renderChannelsPanel();
           renderDmAvatarRail();
         }
-        const preview=m.audioData?'🎤 Voice message':(m.imageData||m.imageUrl)?'🖼️ Image':(m.fileData||m.fileUrl)?'📎 '+(m.fileName||'File'):(m._decrypted!==undefined?m._decrypted:m.content||'').substring(0,60);
+        const preview=(m.audioData||m.audioUrl)?'🎤 Voice message':(m.imageData||m.imageUrl)?'🖼️ Image':(m.fileData||m.fileUrl)?'📎 '+(m.fileName||'File'):(m._decrypted!==undefined?m._decrypted:m.content||'').substring(0,60);
         sendDesktopNotif(m.name, preview, m.avatarUrl||'');
       });
     }
@@ -4886,6 +4971,7 @@ function mediaHtml(msg){
   if(msg.imageData)return`<br><img class="msg-img" src="${msg.imageData}" alt="img" loading="lazy" decoding="async" onclick="openImgViewer('${msg.id}')" style="cursor:zoom-in;">`;
   if(msg.imageUrl)return`<br><img class="msg-img" src="${msg.imageUrl}" alt="img" onclick="window.open('${msg.imageUrl}','_blank')" onerror="this.style.display='none'">`;
   if(msg.coverImg)return`<br><img class="msg-img" src="${msg.coverImg}" alt="img" onclick="openImgViewer('${msg.id}')" style="cursor:zoom-in;">`;
+  if(msg.audioUrl)return`<br><audio controls src="${msg.audioUrl}" style="margin-top:6px;max-width:280px;border-radius:var(--r-sm);"></audio>`;
   if(msg.audioData)return`<br><audio controls src="${msg.audioData}" style="margin-top:6px;max-width:280px;border-radius:var(--r-sm);"></audio>`;
   if(msg.stickerUrl)return`<img src="${msg.stickerUrl}" alt="${msg.sticker||'sticker'}" style="width:140px;height:140px;object-fit:contain;margin-top:4px;display:block;">`;
   if(msg.sticker)return`<div style="font-size:3rem;margin-top:4px;">${msg.sticker}</div>`;
@@ -5278,7 +5364,11 @@ async function sendMessage(){
   }
   if(!state.messages[state.currentChannelId])state.messages[state.currentChannelId]=[];
   if(!state.messages[state.currentChannelId].find(m=>m.id===msg.id))state.messages[state.currentChannelId].push(msg);
-  if(!isDM)cleanupChannelMessages(state.currentChannelId);
+  // FIX: this used to only cleanup non-DM channels ("if(!isDM)") — DMs sent
+  // from the actual chat box never triggered pruning at all here, only once
+  // when the DM was first opened in a session. Now both paths check.
+  if(isDM)checkAndPruneChannel(dmId,'dmMessages/');
+  else cleanupChannelMessages(state.currentChannelId);
   input.value='';input.style.height='auto';
   cancelPendingImage();
   fbRemove('typing/'+state.currentUser.uid);
@@ -5388,14 +5478,14 @@ function doForwardTo(target){
     color:state.currentUser.nameColor||'',avatarUrl:state.currentUser.avatarUrl||'',
     content,ts:Date.now(),reactions:[],pinned:false,edited:false,
     imageData:msg.imageData||null,imageUrl:msg.imageUrl||null,fileData:msg.fileData||null,fileUrl:msg.fileUrl||null,fileName:msg.fileName||null,
-    fileType:msg.fileType||null,audioData:msg.audioData||null,
+    fileType:msg.fileType||null,audioData:msg.audioData||null,audioUrl:msg.audioUrl||null,
     forwardedFrom:{name:msg.name,ts:msg.ts}
   };
   if(target.type==='dm'){
     const dmId=getDMId(state.currentUser.uid,target.uid);
     fbSet('dmMessages/'+dmId+'/'+fwd.id,fwd);
     const otherInfo=state.dmConversations[target.uid]||{name:'?'};
-    const preview='↪️ '+(content||((fwd.imageData||fwd.imageUrl)?'Imagen':(fwd.fileData||fwd.fileUrl)?'Archivo':fwd.audioData?'Mensaje de voz':'')).substring(0,40);
+    const preview='↪️ '+(content||((fwd.imageData||fwd.imageUrl)?'Image':(fwd.fileData||fwd.fileUrl)?'File':(fwd.audioData||fwd.audioUrl)?'Voice message':'')).substring(0,40);
     fbSet('dms/'+state.currentUser.uid+'/'+target.uid,{uid:target.uid,name:otherInfo.name,avatarUrl:otherInfo.avatarUrl||'',lastMsg:preview,ts:Date.now()});
     fbSet('dms/'+target.uid+'/'+state.currentUser.uid,{uid:state.currentUser.uid,name:state.currentUser.name,avatarUrl:state.currentUser.avatarUrl||'',lastMsg:preview,ts:Date.now()});
   }else{
@@ -5512,7 +5602,7 @@ async function dmEncryptText(dmId,plaintext){
 async function dmDecryptText(dmId,msg){
   if(!msg||!msg.content||!msg.content.startsWith('🔒'))return msg?.content||'';
   const key=await getDMCryptoKey(dmId);
-  if(!key)return '🔒 Encrypted message (configura la clave del chat para leerlo)';
+  if(!key)return '🔒 Encrypted message (set up the chat key to read it)';
   try{
     const body=msg.content.slice(1);
     const [ivB64,cipherB64]=body.split('.');
@@ -5703,7 +5793,7 @@ function editCategory(catId){
     </div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:20px;">
       <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Cancelar</button>
-      <button class="btn btn-primary" onclick="(function(){
+      <button class="btn btn-primary" onclick="(async function(){
         const name=document.getElementById('_cat-name').value.trim();
         if(!name)return;
         const b64=document.getElementById('_cat-icon-prev').dataset.b64||'';
@@ -5711,7 +5801,11 @@ function editCategory(catId){
         const cat=srv.channels.find(c=>c.id==='${catId}');
         if(!cat)return;
         cat.name=name;
-        if(b64)cat.icon=b64;else if(b64==='')cat.icon='';
+        if(b64){
+          const url=await uploadToSupabaseStorage(b64,'category-icons');
+          if(url)cat.icon=url;
+          else{showToast(t("⚠️ Couldn't upload the image (check your Supabase Storage configuration)"));return;}
+        } else if(b64===''&&document.getElementById('_cat-icon-prev').innerHTML==='📁'){cat.icon='';}
         saveServers();renderChannelsPanel();if(document.getElementById('ss-sec-channels')?.classList.contains('active'))renderSsChannels(srv);showToast(t("✅ Categoría actualizada"));
         document.querySelector('[style*=fixed][style*=backdrop]').remove();
       })()">Guardar</button>
@@ -6951,13 +7045,22 @@ function editCustomEmoji(idx){
   document.getElementById('_emo-name').focus();
   const restrictSel=document.getElementById('_emo-restrict');if(restrictSel)restrictSel.value=curVal;
 }
-function saveEditedEmoji(idx){
+async function saveEditedEmoji(idx){
   const srv=getServer(state.currentServerId);if(!srv)return;
   const e=srv.customEmojis[idx];if(!e)return;
   const name=document.getElementById('_emo-name').value.trim().toLowerCase().replace(/\s+/g,'_');
   if(!name){showToast(t("⚠️ Nombre requerido"));return;}
   const newB64=document.getElementById('_emo-prev').dataset.b64;
-  if(newB64)e.url=newB64;
+  // newB64 is only set when the person picked a NEW image file in this edit
+  // dialog (compressImagePNG puts it there) — upload it to Supabase Storage
+  // just like a brand-new emoji, instead of writing the raw base64 straight
+  // into state/servers (which every connected user downloads on every load).
+  if(newB64){
+    showToast(t("⏳ Subiendo emoji..."));
+    const url=await uploadToSupabaseStorage(newB64,'emojis');
+    if(!url){showToast(t("⚠️ Couldn't upload the emoji (check your Supabase Storage configuration)"));return;}
+    e.url=url;
+  }
   e.name=name;
   const restrictVal=document.getElementById('_emo-restrict')?.value||'';
   if(restrictVal){const [type,id]=restrictVal.split(':');e.restrict={type,id};}
@@ -7785,12 +7888,19 @@ function openServerAvatarModal(){
 }
 function handleServerAvatarFile(input){
   const file=input.files[0];if(!file)return;
-  const reader=new FileReader();
-  reader.onload=e=>{
-    document.getElementById('sa-preview').innerHTML=`<img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;">`;
-    saveServerAvatarUrl(e.target.result);
-  };
-  reader.readAsDataURL(file);
+  if(file.size>5*1024*1024){showToast(t("⚠️ Imagen muy grande (máx 5MB)"));return;}
+  // Compress locally, THEN upload to Supabase Storage and save only the resulting
+  // URL — this used to save the raw base64 straight into state/servers, the one
+  // node every connected user downloads on every load, with no cleanup ever.
+  compressImage(file,256,256,200,b64=>{
+    document.getElementById('sa-preview').innerHTML=`<img src="${b64}" style="width:100%;height:100%;object-fit:cover;">`;
+    (async()=>{
+      showToast(t("⏳ Uploading image..."));
+      const url=await uploadToSupabaseStorage(b64,'server-avatars');
+      if(url)saveServerAvatarUrl(url);
+      else showToast(t("⚠️ Couldn't upload the image (check your Supabase Storage configuration)"));
+    })();
+  });
 }
 function saveServerAvatarUrl(url){
   const srv=getServer(state.currentServerId);if(!srv)return;
@@ -7809,18 +7919,26 @@ function clearServerAvatar(){
 function handleServerBannerFile(input){
   const file=input.files[0];if(!file)return;
   if(file.size>5*1024*1024){showToast(t("⚠️ Imagen muy grande (máx 5MB)"));return;}
-  const applyPreview=b64=>{
+  // Same fix as the server avatar above: upload to Supabase Storage and store
+  // only the URL, instead of writing the raw/compressed base64 directly into
+  // state/servers (which used to bypass Supabase entirely for this one feature).
+  const uploadAndSave=b64=>{
     const el=document.getElementById('sb-preview');
     el.style.backgroundImage=`url(${b64})`;el.style.backgroundSize='cover';el.style.backgroundPosition='center';el.textContent='';
-    saveServerBannerUrl(b64);
+    (async()=>{
+      showToast(t("⏳ Uploading image..."));
+      const url=await uploadToSupabaseStorage(b64,'server-banners');
+      if(url)saveServerBannerUrl(url);
+      else showToast(t("⚠️ Couldn't upload the image (check your Supabase Storage configuration)"));
+    })();
   };
   if(file.type==='image/gif'){
     if(!hasCommuniterPlus(state.currentUser)){showToast(t("🔒 Los banners GIF son de Communiter+"));return;}
     if(file.size>3*1024*1024){showToast(t("⚠️ GIF muy grande (máx 3MB para animados)"));return;}
-    const reader=new FileReader();reader.onload=e=>applyPreview(e.target.result);reader.readAsDataURL(file);
+    const reader=new FileReader();reader.onload=e=>uploadAndSave(e.target.result);reader.readAsDataURL(file);
     return;
   }
-  compressImage(file,800,200,200,applyPreview);
+  compressImage(file,800,200,200,uploadAndSave);
 }
 function saveServerBannerUrl(url){
   const srv=getServer(state.currentServerId);if(!srv)return;
@@ -8165,14 +8283,27 @@ function saveUserSettings(){
   const bannerPosY=parseFloat(document.getElementById('us-banner-posy')?.value)||50;
   state.currentUser={...state.currentUser,name,handle,displayName,bio,aboutMe,activity,avatarUrl,bannerUrl,customStatus,status,nameColor,social,privacy,nameplateColor1,nameplateColor2,avatarDecorationColor,avatarDecorationImageUrl,avatarDecorationScale,avatarDecorationOffsetY,profileEffectColor,bannerColor,bannerPosX,bannerPosY,nameFont};
   const userData={uid:state.currentUser.uid,name,handle,displayName,tag:state.currentUser.tag,email:state.currentUser.email||'',avatarUrl,bannerUrl,nameColor,status,customStatus,bio,aboutMe,activity,social,privacy,nameplateColor1,nameplateColor2,avatarDecorationColor,avatarDecorationImageUrl,avatarDecorationScale,avatarDecorationOffsetY,profileEffectColor,bannerColor,bannerPosX,bannerPosY,nameFont,createdAt:state.currentUser.createdAt||Date.now(),storeBadgeUrl:state.currentUser.storeBadgeUrl||null,storeEquipped:state.currentUser.storeEquipped||null};
-  fbSet('users/'+state.currentUser.uid,userData);
+  // IMPORTANT: this used to be fbSet(...), which REPLACES the entire users/{uid}
+  // node in Firebase. Since userData only lists the fields this specific form
+  // knows about, any other field the profile had — isPlus, plusGrandfathered,
+  // lastServer, accountDisabled, or anything added later — got silently WIPED
+  // every single time someone saved their settings. That's how a profile that
+  // was previously complete could end up reduced to almost nothing. fbUpdate()
+  // merges these fields in instead of replacing the whole node, so everything
+  // not listed here stays exactly as it was.
+  fbUpdate('users/'+state.currentUser.uid,userData);
   // Handle index for friend search
   fbSet('handles/'+handle,state.currentUser.uid);
   // Remove old handle if changed
   if(state.currentUser._oldHandle&&state.currentUser._oldHandle!==handle){fbRemove('handles/'+state.currentUser._oldHandle);}
   // Keep email backup in sync so profile survives Firebase migration
   const eKey=emailToKey(state.currentUser.email||'');
-  if(eKey)fbSet('usersByEmail/'+eKey,userData);
+  if(eKey)fbUpdate('usersByEmail/'+eKey,userData);
+  // Self-healing: if for any reason this device's copy is missing something
+  // that the email backup already has (e.g. it got wiped before this fix
+  // existed), fill those specific fields back in from usersByEmail instead of
+  // leaving them empty going forward.
+  if(eKey)restoreMissingProfileFieldsFromEmailBackup(state.currentUser.uid,eKey);
   fbSet('presence/'+state.currentUser.uid,{uid:state.currentUser.uid,name,avatarUrl,nameColor,status,customStatus,activity,ts:Date.now()});
   state.servers.forEach(srv=>{const m=(srv.members||[]).find(m=>(m.uid||m.id)===state.currentUser.uid);if(m){m.name=name;m.avatarUrl=avatarUrl;m.avatarDecorationColor=avatarDecorationColor;m.avatarDecorationImageUrl=avatarDecorationImageUrl;m.avatarDecorationScale=avatarDecorationScale;m.avatarDecorationOffsetY=avatarDecorationOffsetY;m.nameplateColor1=nameplateColor1;m.nameplateColor2=nameplateColor2;m.profileEffectColor=profileEffectColor;m.bannerColor=bannerColor;m.bannerUrl=bannerUrl;m.bannerPosX=bannerPosX;m.bannerPosY=bannerPosY;m.nameFont=nameFont;m.isPlus=state.currentUser.isPlus;m.plusGrandfathered=state.currentUser.plusGrandfathered;m.storeBadgeUrl=state.currentUser.storeBadgeUrl||null;m.storeEquipped=state.currentUser.storeEquipped||null;}});
   saveServers();closeModal('user-settings-modal');updateUserBar();renderAll();
@@ -8881,7 +9012,7 @@ function _updatePWAButtonUI(){
     if(desc)desc.textContent='Download Communiter as an app: opens faster, has its own icon, and feels native.';
   }else{
     btn.disabled=true;btn.style.opacity='.5';
-    if(desc)desc.textContent='Tu navegador no ofreció instalar Communiter todavía. Busca "Instalar app" en el menú (⋮) de tu navegador.';
+    if(desc)desc.textContent='Your browser hasn\'t offered to install Communiter yet. Look for "Install app" in your browser\'s menu (⋮).';
   }
 }
 async function installPWA(){
@@ -9706,19 +9837,24 @@ function closeAudioModal(){
 }
 function sendAudioMessage(){
   if(!_audioBlob||!state.currentChannelId){showToast(t("⚠️ Graba algo primero"));return;}
-  const reader=new FileReader();
-  reader.onload=e=>{
-    const b64=e.target.result;
+  // Voice messages used to be stored as raw base64 directly inside the Firebase
+  // message (audioData) — audio encodes much larger than images for the same
+  // content, and every channel open re-downloaded every one of these in full.
+  // Now, same as images/GIFs/files, it's uploaded to Supabase Storage first and
+  // only the resulting URL (audioUrl) gets saved to Firebase.
+  (async()=>{
     const u=state.currentUser;
     const isDM=!!state.currentDmUid;
     const _rc=isDM?'':getRoleColorForUserInServer(u.uid,state.currentServerId);
-    const msg={id:'msg'+genId(12),uid:u.uid,name:u.name,color:u.nameColor||'',roleColor:_rc,avatarUrl:u.avatarUrl||'',content:'',audioData:b64,ts:Date.now(),reactions:[],pinned:false};
+    showToast(t("⏳ Uploading voice message..."));
+    const url=await uploadToSupabaseStorage(_audioBlob,'voice-messages');
+    if(!url){showToast(t("⚠️ Couldn't upload to Supabase Storage. Check your configuration. The file wasn't saved."));return;}
+    const msg={id:'msg'+genId(12),uid:u.uid,name:u.name,color:u.nameColor||'',roleColor:_rc,avatarUrl:u.avatarUrl||'',content:'',audioUrl:url,ts:Date.now(),reactions:[],pinned:false};
     msg.channelId=state.currentChannelId;
     sendMsg(msg);
     closeAudioModal();
     showToast(t("<svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z\"/><path d=\"M19 10v2a7 7 0 0 1-14 0v-2\"/><line x1=\"12\" y1=\"19\" x2=\"12\" y2=\"23\"/><line x1=\"8\" y1=\"23\" x2=\"16\" y2=\"23\"/></svg> Audio enviado"));
-  };
-  reader.readAsDataURL(_audioBlob);
+  })();
 }
 // CSS for audio viz
 document.head.insertAdjacentHTML('beforeend','<style>@keyframes vizBar{from{transform:scaleY(.3)}to{transform:scaleY(1)}}</style>');
@@ -9753,11 +9889,23 @@ function sendMsg(msg){
     fbSet('dmMessages/'+dmId+'/'+msg.id,msg);
     const u=state.currentUser,otherUid=state.currentDmUid;
     const otherInfo=state.dmConversations[otherUid]||{name:'?'};
-    const lastMsgPreview=msg.audioData?'🎤 Voice message':(msg.imageData||msg.imageUrl)?'🖼️ Image':(msg.fileData||msg.fileUrl)?'📎 '+(msg.fileName||'Archivo'):(msg.content||'').substring(0,40);
+    const lastMsgPreview=(msg.audioData||msg.audioUrl)?'🎤 Voice message':(msg.imageData||msg.imageUrl)?'🖼️ Image':(msg.fileData||msg.fileUrl)?'📎 '+(msg.fileName||'Archivo'):(msg.content||'').substring(0,40);
     fbSet('dms/'+u.uid+'/'+otherUid,{uid:otherUid,name:otherInfo.name,avatarUrl:otherInfo.avatarUrl||'',lastMsg:lastMsgPreview,ts:Date.now()});
     fbSet('dms/'+otherUid+'/'+u.uid,{uid:u.uid,name:u.name,avatarUrl:u.avatarUrl||'',lastMsg:lastMsgPreview,ts:Date.now()});
+    // FIX: this path (used by voice messages, forwarded messages, and anything
+    // else that calls sendMsg() directly instead of the inline chat-input
+    // handler) never triggered cleanup for DMs at all — a DM could grow
+    // forever during a single long session with nothing ever pruning it.
+    checkAndPruneChannel(dmId,'dmMessages/');
   }
-  else{fbSet('state/messages/'+ch+'/'+msg.id,msg);}
+  else{
+    fbSet('state/messages/'+ch+'/'+msg.id,msg);
+    // Same fix as above but for server channels: previously only the inline
+    // text-input handler called cleanupChannelMessages() on send — messages
+    // sent through this generic function (voice messages, forwards, etc.)
+    // silently skipped cleanup entirely.
+    cleanupChannelMessages(ch);
+  }
 }
 
 // ── UTILS ──
