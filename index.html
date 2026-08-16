@@ -3830,6 +3830,20 @@ async function onUserLoggedIn(firebaseUser){
     else checkAndPruneChannel(state.currentChannelId,'state/messages/');
   },180000);
 
+  // Periodic profile self-heal. restoreMissingProfileFieldsFromEmailBackup()
+  // was previously only called at login and right after saving the profile —
+  // if a field went missing (photo, banner, etc.) WHILE someone already had
+  // the app open in a tab, it stayed missing for the rest of that session,
+  // since nothing was re-checking in the background. Now it also runs every
+  // few minutes for as long as the session stays open, same as the message
+  // cleanup re-check above, so it fixes itself without needing a reload or a
+  // manual save.
+  setInterval(()=>{
+    if(!state.currentUser||!state.currentUser.email)return;
+    const eKey=emailToKey(state.currentUser.email);
+    if(eKey)restoreMissingProfileFieldsFromEmailBackup(state.currentUser.uid,eKey);
+  },180000);
+
   // Request notification permission
   if('Notification' in window && Notification.permission==='default'){
     Notification.requestPermission();
