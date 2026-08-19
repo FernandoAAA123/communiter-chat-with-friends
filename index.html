@@ -635,6 +635,22 @@ input[type=color]{width:32px;height:32px;border:none;border-radius:var(--r-xs);c
   /* App container full screen */
   #app{position:fixed;inset:0;overflow:hidden;}
 
+  /* Server settings modal: the desktop version puts a 220px-fixed sidebar
+     next to the content, side by side — on a narrow phone that left almost
+     no room for the content (a 375px-wide screen only had ~155px left),
+     which is what made it "look terrible" on mobile. Now it behaves like
+     Discord's mobile settings: full-screen category list by default, and
+     tapping a category swaps to a full-screen view of just that section
+     with a back button, via the .ss-mobile-viewing class toggled by
+     openSsSection()/closeSsMobileSection() in JS. */
+  #server-settings-modal{padding:0;}
+  #ss-layout{max-width:100%;width:100%;height:100%;border-radius:0;}
+  #ss-sidebar{width:100%;padding-top:56px;}
+  #ss-main-content{display:none;}
+  #server-settings-modal.ss-mobile-viewing #ss-sidebar{display:none;}
+  #server-settings-modal.ss-mobile-viewing #ss-main-content{display:block;width:100%;}
+  #server-settings-modal.ss-mobile-viewing #ss-mobile-back{display:flex;}
+
   /* Bottom nav bar (servers) */
   #server-bar{
     position:fixed;bottom:0;left:0;right:0;top:auto;
@@ -1976,7 +1992,7 @@ input[type=color]{width:32px;height:32px;border:none;border-radius:var(--r-xs);c
 
 <!-- SERVER SETTINGS MODAL -->
 <div class="modal-overlay" id="server-settings-modal">
-  <div style="display:flex;width:100%;height:100%;max-width:900px;margin:0 auto;position:relative;">
+  <div id="ss-layout" style="display:flex;width:100%;height:100%;max-width:900px;margin:0 auto;position:relative;">
 
     <!-- SIDEBAR NAV -->
     <div id="ss-sidebar" style="width:220px;flex-shrink:0;background:var(--bg-1);padding:40px 8px 20px;overflow-y:auto;border-right:1px solid var(--border);">
@@ -2014,7 +2030,8 @@ input[type=color]{width:32px;height:32px;border:none;border-radius:var(--r-xs);c
     </div>
 
     <!-- MAIN CONTENT -->
-    <div style="flex:1;overflow-y:auto;background:var(--bg-2);position:relative;">
+    <div id="ss-main-content" style="flex:1;overflow-y:auto;background:var(--bg-2);position:relative;">
+      <button id="ss-mobile-back" onclick="closeSsMobileSection()" style="display:none;position:sticky;top:0;left:0;background:var(--bg-2);border:none;border-bottom:1px solid var(--border);color:var(--text-1);width:100%;padding:14px 16px;font-size:.85rem;font-weight:600;cursor:pointer;align-items:center;gap:8px;z-index:11;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg> Settings</button>
       <button onclick="closeModal('server-settings-modal')" style="position:fixed;top:20px;right:20px;background:var(--bg-4);border:none;color:var(--text-2);width:32px;height:32px;border-radius:50%;font-size:1rem;cursor:pointer;z-index:10;display:flex;align-items:center;justify-content:center;transition:all .15s;" onmouseover="this.style.background='var(--bg-5)'" onmouseout="this.style.background='var(--bg-4)'"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
 
       <!-- GENERAL / PERFIL -->
@@ -3839,7 +3856,7 @@ async function onUserLoggedIn(firebaseUser){
 
   // Heartbeat presence
   setInterval(()=>{
-    if(state.currentUser)fbSet('presence/'+state.currentUser.uid,{uid:state.currentUser.uid,name:state.currentUser.name,avatarUrl:state.currentUser.avatarUrl||'',nameColor:state.currentUser.nameColor,status:state.currentUser.status||'online',customStatus:state.currentUser.customStatus||'',activity:state.currentUser.activity||null,ts:Date.now()});
+    if(state.currentUser)fbSet('presence/'+state.currentUser.uid,{uid:state.currentUser.uid,name:state.currentUser.name,avatarUrl:state.currentUser.avatarUrl||'',nameColor:state.currentUser.nameColor,status:state.currentUser.status||'online',customStatus:state.currentUser.customStatus||'',activity:state.currentUser.activity||null,avatarDecorationColor:state.currentUser.avatarDecorationColor||null,avatarDecorationImageUrl:state.currentUser.avatarDecorationImageUrl||null,avatarDecorationScale:state.currentUser.avatarDecorationScale||134,avatarDecorationOffsetY:state.currentUser.avatarDecorationOffsetY||0,nameplateColor1:state.currentUser.nameplateColor1||null,nameplateColor2:state.currentUser.nameplateColor2||null,profileEffectColor:state.currentUser.profileEffectColor||null,nameFont:state.currentUser.nameFont||'',storeBadgeUrl:state.currentUser.storeBadgeUrl||null,ts:Date.now()});
   },25000);
 
   // Periodic cleanup re-check for whatever channel/DM is currently open.
@@ -5322,19 +5339,25 @@ function buildMemberEl(m,isOnline){
   const storeBadgeHtml=(!isBot&&m.storeBadgeUrl)?`<img src="${m.storeBadgeUrl}" style="width:12px;height:12px;object-fit:contain;margin-left:4px;vertical-align:middle;">`:'';
   const activity=isOnline?(state.onlineUsers[uid]?.activity||m.activity):null;
   const activityHtml=activity?renderActivityLine(activity):'';
-  const ringColor=m.avatarDecorationColor?avatarFrameRing(m.avatarDecorationColor):'';
-  const avatarRingStyle=(!m.avatarDecorationImageUrl&&ringColor)?`box-shadow:0 0 0 2px ${ringColor};`:'';
+  const ringColor=(live&&live.avatarDecorationColor!==undefined?live.avatarDecorationColor:m.avatarDecorationColor)?avatarFrameRing(live&&live.avatarDecorationColor!==undefined?live.avatarDecorationColor:m.avatarDecorationColor):'';
+  const decoUrl=(live&&live.avatarDecorationImageUrl!==undefined)?live.avatarDecorationImageUrl:m.avatarDecorationImageUrl;
+  const decoScale=(live&&live.avatarDecorationScale!==undefined)?live.avatarDecorationScale:m.avatarDecorationScale;
+  const decoOffsetY=(live&&live.avatarDecorationOffsetY!==undefined)?live.avatarDecorationOffsetY:m.avatarDecorationOffsetY;
+  const avatarRingStyle=(!decoUrl&&ringColor)?`box-shadow:0 0 0 2px ${ringColor};`:'';
   // Same as in the profile popup: the decoration image is overlaid and
   // bigger than the avatar (not a background), so it supports designs that stick out past the circle.
-  const decoImgHtml=m.avatarDecorationImageUrl?`<img src="${m.avatarDecorationImageUrl}" style="position:absolute;top:50%;left:50%;width:${m.avatarDecorationScale||134}%;height:${m.avatarDecorationScale||134}%;transform:translate(-50%,calc(-50% + ${((m.avatarDecorationOffsetY||0)*32/68).toFixed(1)}px));object-fit:contain;pointer-events:none;z-index:2;">`:'';
-  const npCss=nameplateCss(m.nameplateColor1,m.nameplateColor2);
+  const decoImgHtml=decoUrl?`<img src="${decoUrl}" style="position:absolute;top:50%;left:50%;width:${decoScale||134}%;height:${decoScale||134}%;transform:translate(-50%,calc(-50% + ${((decoOffsetY||0)*32/68).toFixed(1)}px));object-fit:contain;pointer-events:none;z-index:2;">`:'';
+  const npColor1=(live&&live.nameplateColor1!==undefined)?live.nameplateColor1:m.nameplateColor1;
+  const npColor2=(live&&live.nameplateColor2!==undefined)?live.nameplateColor2:m.nameplateColor2;
+  const npCss=nameplateCss(npColor1,npColor2);
   // The nameplate is now the background for the WHOLE row (avatar + name + badge), not just
   // a box hugging the text — so it looks like a card, just like in Discord.
   if(npCss){
     div.style.background=npCss;
     div.style.borderRadius='8px';
   }
-  const nameStyle=`color:${isOnline?(roleColor||'var(--text-1)'):'var(--text-3)'};${m.nameFont?`font-family:${m.nameFont};`:''}`;
+  const nameFont=(live&&live.nameFont!==undefined)?live.nameFont:m.nameFont;
+  const nameStyle=`color:${isOnline?(roleColor||'var(--text-1)'):'var(--text-3)'};${nameFont?`font-family:${nameFont};`:''}`;
   div.innerHTML=`<div class="member-avatar-wrap"><div class="member-avatar" style="background:${bg};${avatarRingStyle}">${avatarC}</div>${decoImgHtml}<div class="member-status" style="background:${statusColor}"></div></div><div class="member-info"><div class="member-name" style="${nameStyle}">${m.nickname?escapeHtml(m.nickname):((live&&live.name)||m.name||'?')}${uid===state.currentUser.uid?` <span style="font-size:.65rem;color:var(--accent);">(${currentLang==='en'?'you':'tú'})</span>`:''}${botBadgeHtml}${plusBadgeHtml}${storeBadgeHtml}</div>${activityHtml}</div>`;
   div.onclick=e=>{ isBot?showBotProfilePopup(e,m):showProfilePopupByUid(e,uid,m); e.stopPropagation(); };
   return div;
@@ -6147,6 +6170,12 @@ function openSsSection(section, btn){
   const sec=document.getElementById('ss-sec-'+section);
   if(sec)sec.classList.add('active');
   if(btn)btn.classList.add('active');
+  // On mobile, picking a category swaps from the full-screen category list
+  // to a full-screen view of just that section (see the ss-mobile-viewing
+  // CSS rules) — same pattern as Discord's mobile settings, instead of
+  // squeezing a 220px sidebar and the content side by side on a narrow screen.
+  document.getElementById('server-settings-modal')?.classList.add('ss-mobile-viewing');
+  document.getElementById('ss-main-content')?.scrollTo(0,0);
   // Lazy render section content
   const srv=getServer(state.currentServerId);if(!srv)return;
   if(section==='roles')renderRolesList(srv);
@@ -6159,6 +6188,9 @@ function openSsSection(section, btn){
     document.getElementById('ss-rules-text').value=srv.rulesText||'';
     document.getElementById('ss-rules-require').classList.toggle('on',!!srv.requireRulesAccept);
   }
+}
+function closeSsMobileSection(){
+  document.getElementById('server-settings-modal')?.classList.remove('ss-mobile-viewing');
 }
 function saveServerRules(){
   const srv=getServer(state.currentServerId);if(!srv)return;
@@ -6297,7 +6329,7 @@ function openServerSettings(){
   // Pending requests
   const pendSec=document.getElementById('ss-pending-section');
   const pendList=document.getElementById('ss-pending-list');
-  if(pendSec&&pendList){const pend=srv.pendingMembers||[];pendSec.style.display=pend.length?'block':'none';pendList.innerHTML=pend.map(p=>`<div style="display:flex;align-items:center;gap:10px;padding:8px;background:var(--bg-3);border-radius:8px;"><div style="width:32px;height:32px;border-radius:50%;background:${getAutoAvatarColor(p.uid||p.name)};display:flex;align-items:center;justify-content:center;font-size:.85rem;font-weight:700;color:#fff;overflow:hidden;">${p.avatarUrl?`<img src="${p.avatarUrl}" style="width:100%;height:100%;object-fit:cover;">`:(p.name||'?')[0].toUpperCase()}</div><div style="flex:1;font-size:.875rem;color:var(--text-1);">${p.name}</div><button class="btn btn-primary btn-sm" onclick="approvePending('${p.uid}')">Aceptar</button><button class="btn btn-ghost btn-sm" onclick="rejectPending('${p.uid}')">Rechazar</button></div>`).join('');}
+  if(pendSec&&pendList){const pend=srv.pendingMembers||[];pendSec.style.display=pend.length?'block':'none';pendList.innerHTML=pend.map(p=>{const uid=p.uid||p.id;const live=state.onlineUsers[uid];const displayName=live?.name||p.name||'?';const displayAvatarUrl=live?.avatarUrl||p.avatarUrl;return `<div style="display:flex;align-items:center;gap:10px;padding:8px;background:var(--bg-3);border-radius:8px;"><div style="width:32px;height:32px;border-radius:50%;background:${getAutoAvatarColor(uid||displayName)};display:flex;align-items:center;justify-content:center;font-size:.85rem;font-weight:700;color:#fff;overflow:hidden;">${displayAvatarUrl?`<img src="${displayAvatarUrl}" style="width:100%;height:100%;object-fit:cover;">`:(displayName||'?')[0].toUpperCase()}</div><div style="flex:1;font-size:.875rem;color:var(--text-1);">${displayName}</div><button class="btn btn-primary btn-sm" onclick="approvePending('${uid}')">Accept</button><button class="btn btn-ghost btn-sm" onclick="rejectPending('${uid}')">Reject</button></div>`;}).join('');}
   document.getElementById('ss-server-desc').value=srv.desc||'';
   document.getElementById('ss-server-icon').value=typeof srv.icon==='string'&&srv.icon!==srv.name[0]?srv.icon:'';
   document.getElementById('ss-server-icon-b64').value='';
@@ -6326,6 +6358,7 @@ function openServerSettings(){
   document.getElementById('invite-code-text').textContent=srv.inviteCode||genId(8);
   // Reset to general tab
   openSsSection('general', document.querySelector('.ss-nav-item[data-section="general"]'));
+  document.getElementById('server-settings-modal')?.classList.remove('ss-mobile-viewing'); // start on the category list on mobile, not jump straight into "general"
   openModal('server-settings-modal');
 }
 function clearServerIcon(){
@@ -6366,17 +6399,24 @@ function renderSsMembers(srv){
     const uid=m.uid||m.id;
     const isOwner=isServerOwner(srv,uid);
     const isCoOwner=srv.coOwnerId===uid&&srv.ownerId!==uid;
-    const color=getAutoAvatarColor(uid||m.name);
+    // Same staleness fix as the main members panel: m.avatarUrl/m.name come
+    // from the snapshot stored in srv.members, which only updates when a
+    // profile save happens to sync it — prefer live data so this list (used
+    // by admins to manage members) never shows an outdated photo/name.
+    const live=(uid===state.currentUser?.uid)?state.currentUser:state.onlineUsers[uid];
+    const displayName=(live&&live.name)||m.name||'?';
+    const displayAvatarUrl=(live&&live.avatarUrl)||m.avatarUrl;
+    const color=getAutoAvatarColor(uid||displayName);
     const hasTimeout=m.timeoutUntil&&m.timeoutUntil>Date.now();
     const row=document.createElement('div');
     row.className='ss-member-row';
     row.innerHTML=`
       <div style="width:36px;height:36px;border-radius:10px;background:${color};display:flex;align-items:center;justify-content:center;font-size:.85rem;font-weight:700;color:#fff;overflow:hidden;flex-shrink:0;">
-        ${m.avatarUrl?`<img src="${m.avatarUrl}" style="width:100%;height:100%;object-fit:cover;">`:(m.name||'?')[0].toUpperCase()}
+        ${displayAvatarUrl?`<img src="${displayAvatarUrl}" style="width:100%;height:100%;object-fit:cover;">`:(displayName||'?')[0].toUpperCase()}
       </div>
       <div style="flex:1;min-width:0;">
-        <div style="font-size:.875rem;font-weight:600;color:var(--text-0);">${m.nickname?escapeHtml(m.nickname):(m.name||'?')}${isOwner&&!isCoOwner?'<span style="font-size:.6rem;background:rgba(245,158,11,.2);color:var(--yellow);border-radius:4px;padding:1px 5px;margin-left:6px;font-weight:700;">OWNER</span>':''}${isCoOwner?'<span style="font-size:.6rem;background:rgba(245,158,11,.15);color:var(--yellow);border-radius:4px;padding:1px 5px;margin-left:6px;font-weight:700;">CO-OWNER</span>':''}${hasTimeout?'<span style="font-size:.6rem;background:rgba(244,63,94,.15);color:var(--red);border-radius:4px;padding:1px 5px;margin-left:6px;font-weight:700;">TIMEOUT</span>':''}</div>
-        <div style="font-size:.72rem;color:var(--text-3);">${m.nickname?`@${m.name} · `:''}${(m.roles||[]).slice(0,3).join(', ')||'No roles'}</div>
+        <div style="font-size:.875rem;font-weight:600;color:var(--text-0);">${m.nickname?escapeHtml(m.nickname):displayName}${isOwner&&!isCoOwner?'<span style="font-size:.6rem;background:rgba(245,158,11,.2);color:var(--yellow);border-radius:4px;padding:1px 5px;margin-left:6px;font-weight:700;">OWNER</span>':''}${isCoOwner?'<span style="font-size:.6rem;background:rgba(245,158,11,.15);color:var(--yellow);border-radius:4px;padding:1px 5px;margin-left:6px;font-weight:700;">CO-OWNER</span>':''}${hasTimeout?'<span style="font-size:.6rem;background:rgba(244,63,94,.15);color:var(--red);border-radius:4px;padding:1px 5px;margin-left:6px;font-weight:700;">TIMEOUT</span>':''}</div>
+        <div style="font-size:.72rem;color:var(--text-3);">${m.nickname?`@${displayName} · `:''}${(m.roles||[]).slice(0,3).join(', ')||'No roles'}</div>
       </div>
       ${isServerAdmin(srv)?`<button class="btn btn-ghost btn-sm" onclick="openNicknameModal('${uid}')" title="Apodo" data-i18n-title="Apodo"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg></button>`:''}
       ${isServerAdmin(srv)?`<button class="btn btn-ghost btn-sm" onclick="manageRoles('${uid}')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7z"/><path d="M5 20h14"/></svg> Roles</button>`:''}
@@ -6389,7 +6429,7 @@ function renderSsMembers(srv){
   if(canManage&&(srv.bannedUsers||[]).length){
     const banHead=document.createElement('div');
     banHead.style.cssText='font-size:.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:20px 0 8px;';
-    banHead.textContent=`BANNEADOS — ${srv.bannedUsers.length}`;
+    banHead.textContent=`BANNED — ${srv.bannedUsers.length}`;
     el.appendChild(banHead);
     srv.bannedUsers.forEach(b=>{
       const row=document.createElement('div');
@@ -6399,7 +6439,7 @@ function renderSsMembers(srv){
           ${b.avatarUrl?`<img src="${b.avatarUrl}" style="width:100%;height:100%;object-fit:cover;opacity:.6;">`:(b.name||'?')[0].toUpperCase()}
         </div>
         <div style="flex:1;min-width:0;"><div style="font-size:.875rem;font-weight:600;color:var(--text-3);">${b.name||'User'}</div></div>
-        <button class="btn btn-ghost btn-sm" onclick="unbanMember('${b.uid||b}')">Desbanear</button>`;
+        <button class="btn btn-ghost btn-sm" onclick="unbanMember('${b.uid||b}')">Unban</button>`;
       el.appendChild(row);
     });
   }
@@ -6909,7 +6949,7 @@ function addRole(){
   const colors=['#2f6bff','#ec4899','#10b981','#f59e0b','#f43f5e','#3b82f6','#8b5cf6','#06b6d4'];
   const color=colors[Math.floor(Math.random()*colors.length)];
   if(!srv.roles)srv.roles=[];
-  srv.roles.push({id:'r'+genId(6),name:'Nuevo rol',color,hoist:false,permissions:getDefaultPerms(false)});
+  srv.roles.push({id:'r'+genId(6),name:'New role',color,hoist:false,permissions:getDefaultPerms(false)});
   saveServers();
   const idx=srv.roles.length-1;
   renderRolesList(srv);
@@ -6921,9 +6961,29 @@ function addRole(){
   }
 }
 function updateRoleColor(idx,color){const srv=getServer(state.currentServerId);if(!srv?.roles?.[idx])return;srv.roles[idx].color=color;saveServers();}
-function deleteRole(idx){
+async function deleteRole(idx){
   const srv=getServer(state.currentServerId);if(!srv)return;
-  srv.roles.splice(idx,1);saveServers();
+  const role=srv.roles?.[idx];if(!role)return;
+  // Every other destructive action in this app (delete channel, delete
+  // message, delete server, remove friend...) asks for confirmation first —
+  // this one didn't, so a single misclick instantly deleted a role with no
+  // way to undo it.
+  if((srv.roles||[]).length<=1){showToast('⚠️ A server needs at least one role');return;}
+  const memberCount=(srv.members||[]).filter(m=>(m.roles||[]).some(rr=>rr===role.id||rr===role.name)).length;
+  const warn=memberCount?` It's currently assigned to ${memberCount} member${memberCount===1?'':'s'}.`:'';
+  if(!(await cmtrConfirm(`Delete the role "${role.name}"?${warn} This can't be undone.`,{danger:true,okText:'Delete'})))return;
+  srv.roles.splice(idx,1);
+  // Members who had this role assigned used to keep a dangling reference to
+  // it forever — the role would vanish from Server Settings but its name/id
+  // stayed stuck in each member's roles list (a "ghost" tag that could still
+  // show up wherever roles are displayed, pointing at nothing). Clean those
+  // up now that the role itself is actually gone.
+  (srv.members||[]).forEach(m=>{
+    if(m.roles&&m.roles.some(rr=>rr===role.id||rr===role.name)){
+      m.roles=m.roles.filter(rr=>rr!==role.id&&rr!==role.name);
+    }
+  });
+  saveServers();
   renderRolesList(srv);
   if(document.getElementById('role-editor-modal').classList.contains('open')){
     _editingRoleIdx=null;renderRoleEditorList(srv);
@@ -8555,7 +8615,7 @@ function saveUserSettings(){
   // existed), fill those specific fields back in from usersByEmail instead of
   // leaving them empty going forward.
   if(eKey)restoreMissingProfileFieldsFromEmailBackup(state.currentUser.uid,eKey);
-  fbSet('presence/'+state.currentUser.uid,{uid:state.currentUser.uid,name,avatarUrl,nameColor,status,customStatus,activity,ts:Date.now()});
+  fbSet('presence/'+state.currentUser.uid,{uid:state.currentUser.uid,name,avatarUrl,nameColor,status,customStatus,activity,avatarDecorationColor,avatarDecorationImageUrl,avatarDecorationScale,avatarDecorationOffsetY,nameplateColor1,nameplateColor2,profileEffectColor,nameFont,storeBadgeUrl:state.currentUser.storeBadgeUrl||null,ts:Date.now()});
   state.servers.forEach(srv=>{const m=(srv.members||[]).find(m=>(m.uid||m.id)===state.currentUser.uid);if(m){m.name=name;m.avatarUrl=avatarUrl;m.avatarDecorationColor=avatarDecorationColor;m.avatarDecorationImageUrl=avatarDecorationImageUrl;m.avatarDecorationScale=avatarDecorationScale;m.avatarDecorationOffsetY=avatarDecorationOffsetY;m.nameplateColor1=nameplateColor1;m.nameplateColor2=nameplateColor2;m.profileEffectColor=profileEffectColor;m.bannerColor=bannerColor;m.bannerUrl=bannerUrl;m.bannerPosX=bannerPosX;m.bannerPosY=bannerPosY;m.nameFont=nameFont;m.isPlus=state.currentUser.isPlus;m.plusGrandfathered=state.currentUser.plusGrandfathered;m.storeBadgeUrl=state.currentUser.storeBadgeUrl||null;m.storeEquipped=state.currentUser.storeEquipped||null;}});
   saveServers();closeModal('user-settings-modal');updateUserBar();renderAll();
   showToast(t("✅ Perfil actualizado"));
