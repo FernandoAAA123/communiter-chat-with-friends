@@ -287,6 +287,17 @@ select option{background:var(--bg-3);color:var(--text-0);}
 /* CHANNELS PANEL */
 #channels-panel{width:var(--channels-w);background:var(--bg-1);display:flex;flex-direction:column;flex-shrink:0;}
 #channels-header{padding:0 14px;height:52px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);flex-shrink:0;gap:8px;}
+/* Discord shows the server banner as a modest strip with the name bar
+   overlaid on its bottom edge (a dark gradient keeps the text readable) —
+   not as a tall full-bleed background image with the name floating below it,
+   which is what this looked like before. has-banner is toggled by JS
+   (renderChannelsPanel) whenever the current server has a bannerUrl set. */
+#channels-banner-wrap.has-banner #channels-header{
+  position:absolute;bottom:0;left:0;right:0;
+  background:linear-gradient(to top, rgba(0,0,0,.8), rgba(0,0,0,.35) 70%, rgba(0,0,0,0));
+  border-bottom:none;
+}
+#channels-banner-wrap.has-banner #server-name{color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.5);}
 #server-name{font-weight:700;font-size:.9rem;color:var(--text-0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;flex:1;letter-spacing:-.01em;}
 #server-name:hover{color:var(--accent-g);}
 #channels-list{flex:1;overflow-y:auto;padding:8px 0 8px;}
@@ -1048,10 +1059,12 @@ input[type=color]{width:32px;height:32px;border:none;border-radius:var(--r-xs);c
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
   </button>
   <div id="channels-panel">
-    <div id="channels-banner" style="display:none;height:60px;background-size:cover;background-position:center;flex-shrink:0;"></div>
-    <div id="channels-header">
-      <span id="server-name" onclick="openServerSettings()"><span data-i18n="Mensajes Directos">Mensajes Directos</span></span>
-      <button class="icon-btn" id="add-channel-btn" title="Crear canal" data-i18n-title="Crear canal" onclick="openAddChannelModal()" style="display:none;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+    <div id="channels-banner-wrap" style="position:relative;flex-shrink:0;">
+      <div id="channels-banner" style="display:none;height:110px;background-size:cover;background-position:center;"></div>
+      <div id="channels-header">
+        <span id="server-name" onclick="openServerSettings()"><span data-i18n="Mensajes Directos">Mensajes Directos</span></span>
+        <button class="icon-btn" id="add-channel-btn" title="Crear canal" data-i18n-title="Crear canal" onclick="openAddChannelModal()" style="display:none;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+      </div>
     </div>
     <div id="channels-list"></div>
     <div id="user-bar">
@@ -4519,20 +4532,31 @@ function renderChannelsPanel(){
   Object.keys(_chVoiceListeners).forEach(chId=>{fbOff('calls/'+chId+'/participants',_chVoiceListeners[chId]);delete _chVoiceListeners[chId];});
   const srv=getServer(state.currentServerId);
   const isDM=state.currentServerId==='__dm__';
-  document.getElementById('server-name').textContent=isDM?'Direct Messages':(srv?srv.name:'');
+  // Discord shows a small round badge next to a server's name for servers set
+  // up as a "Community" (their term for a public, discoverable server) —
+  // recreated here as an inline SVG rather than an image asset, shown for
+  // servers with serverType 'public', the closest existing concept in this
+  // app to Discord's community designation.
+  const communityBadge=(!isDM&&srv&&srv.serverType==='public')
+    ?` <span title="Community server" style="display:inline-flex;vertical-align:-3px;width:16px;height:16px;border-radius:50%;background:var(--accent);align-items:center;justify-content:center;flex-shrink:0;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>`
+    :'';
+  document.getElementById('server-name').innerHTML=isDM?'Direct Messages':escapeHtml(srv?.name||'')+communityBadge;
   document.getElementById('add-channel-btn').style.display=(!isDM&&srv&&hasPermission(state.currentUser.uid,'manage_channels'))?'':'none';
   // The server banner used to only be visible on the invite/join card — once
   // you were actually IN a server there was nowhere it showed at all, even
   // though it's set. Shows here now, same as Discord shows it behind the
   // channel list header for servers that have one configured.
   const banner=document.getElementById('channels-banner');
+  const bannerWrap=document.getElementById('channels-banner-wrap');
   if(banner){
     if(!isDM&&srv&&srv.bannerUrl){
       banner.style.display='block';
       banner.style.backgroundImage=`url(${srv.bannerUrl})`;
+      bannerWrap?.classList.add('has-banner');
     }else{
       banner.style.display='none';
       banner.style.backgroundImage='';
+      bannerWrap?.classList.remove('has-banner');
     }
   }
   const list=document.getElementById('channels-list');list.innerHTML='';
@@ -6829,7 +6853,14 @@ function renderRolesList(srv){
   const el=document.getElementById('ss-roles-list');if(!el)return;
   el.innerHTML='';
   const admin=isServerAdmin(srv);
-  (srv.roles||[]).forEach((role,i)=>{
+  const roles=srv.roles||[];
+  // Group by category (in the order each category first appears), with
+  // uncategorized roles rendered under no header, at the top — this is what
+  // "separate roles into categories" means here: a lightweight grouping
+  // label per role rather than a whole separate category-management system.
+  const categories=[];
+  roles.forEach(r=>{if(r.category&&!categories.includes(r.category))categories.push(r.category);});
+  const renderRoleRow=(role,i)=>{
     const memberCount=(srv.members||[]).filter(m=>(m.roles||[]).some(rr=>rr===role.id||rr===role.name)).length;
     const div=document.createElement('div');
     div.className='list-item-row';
@@ -6837,7 +6868,7 @@ function renderRolesList(srv){
     div.draggable=admin;
     div.innerHTML=`
       ${admin?'<span style="color:var(--text-3);opacity:.5;font-size:.8rem;cursor:grab;flex-shrink:0;" title="Arrastrar para reordenar" data-i18n-title="Arrastrar para reordenar">⠿</span>':''}
-      <div style="width:14px;height:14px;border-radius:50%;background:${role.color};flex-shrink:0;"></div>
+      ${role.iconUrl?`<div style="width:20px;height:20px;border-radius:6px;overflow:hidden;flex-shrink:0;"><img src="${role.iconUrl}" style="width:100%;height:100%;object-fit:cover;"></div>`:`<div style="width:14px;height:14px;border-radius:50%;background:${role.color};flex-shrink:0;"></div>`}
       <span style="flex:1;font-size:.875rem;font-weight:600;color:var(--text-0);">${role.name}</span>
       ${role.permissions?.admin?'<span style="font-size:.65rem;background:rgba(244,63,94,.15);color:var(--red);border-radius:4px;padding:2px 6px;font-weight:700;">ADMIN</span>':''}
       <span style="font-size:.72rem;color:var(--text-3);">${memberCount} miembro${memberCount!==1?'s':''}</span>
@@ -6860,6 +6891,15 @@ function renderRolesList(srv){
       });
     }
     el.appendChild(div);
+  };
+  const uncategorized=roles.map((r,i)=>[r,i]).filter(([r])=>!r.category);
+  uncategorized.forEach(([role,i])=>renderRoleRow(role,i));
+  categories.forEach(cat=>{
+    const head=document.createElement('div');
+    head.style.cssText='font-size:.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:16px 0 8px;';
+    head.textContent=cat;
+    el.appendChild(head);
+    roles.map((r,i)=>[r,i]).filter(([r])=>r.category===cat).forEach(([role,i])=>renderRoleRow(role,i));
   });
 }
 
@@ -6887,8 +6927,11 @@ function renderRoleEditorSettings(srv,idx){
   const role=srv.roles?.[idx];const el=document.getElementById('re-role-settings');if(!el||!role)return;
   document.getElementById('re-title').textContent='Editar: '+role.name;
   const perms=role.permissions||getDefaultPerms(false);
+  const existingCategories=[...new Set((srv.roles||[]).map(r=>r.category).filter(Boolean))];
   el.innerHTML=`
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
+      <div id="re-role-icon-prev" onclick="document.getElementById('re-role-icon-file').click()" style="width:40px;height:40px;border-radius:10px;background:${role.iconUrl?'#000':'var(--bg-4)'};display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;overflow:hidden;border:1px dashed var(--border);" title="Role icon (optional)">${role.iconUrl?`<img src="${role.iconUrl}" style="width:100%;height:100%;object-fit:cover;">`:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>'}</div>
+      <input type="file" id="re-role-icon-file" accept="image/*" style="display:none" onchange="handleRoleIconUpload(this,${idx})">
       <input type="text" id="re-role-name" value="${role.name}" placeholder="Nombre del rol" data-i18n-placeholder="Nombre del rol" style="flex:1;min-width:120px;">
       <label style="display:flex;align-items:center;gap:6px;margin:0;text-transform:none;letter-spacing:0;font-size:.85rem;color:var(--text-1);cursor:pointer;">
         <span>Color:</span><input type="color" value="${role.color}" id="re-role-color" style="width:36px;height:36px;">
@@ -6897,6 +6940,11 @@ function renderRoleEditorSettings(srv,idx){
         <div class="toggle ${role.hoist?'on':''}" id="re-role-hoist" onclick="this.classList.toggle('on')"></div>
         <span>Mostrar separado</span>
       </label>
+    </div>
+    <div style="margin-bottom:16px;">
+      <label style="font-size:.72rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);display:block;margin-bottom:6px;">Category (optional — groups roles together in the list)</label>
+      <input type="text" id="re-role-category" value="${role.category||''}" placeholder="e.g. Staff, Community..." list="re-role-category-list" style="width:100%;">
+      <datalist id="re-role-category-list">${existingCategories.map(c=>`<option value="${escapeHtml(c)}">`).join('')}</datalist>
     </div>
     <div style="font-size:.72rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);margin-bottom:8px;">Permisos</div>
     <div id="re-perms-list">
@@ -6924,6 +6972,20 @@ function renderRoleEditorSettings(srv,idx){
       <button class="btn btn-danger" onclick="deleteRole(${idx});closeModal('role-editor-modal')">Eliminar rol</button>
     </div>`;
 }
+async function handleRoleIconUpload(input,idx){
+  const file=input.files[0];if(!file)return;
+  const srv=getServer(state.currentServerId);if(!srv?.roles?.[idx])return;
+  if(file.size>3*1024*1024){showToast('⚠️ Image too large (max 3MB)');return;}
+  compressImagePNG(file,128,128,150,async b64=>{
+    const prev=document.getElementById('re-role-icon-prev');
+    if(prev){prev.style.background='#000';prev.innerHTML=`<img src="${b64}" style="width:100%;height:100%;object-fit:cover;">`;}
+    showToast(t("⏳ Uploading image..."));
+    const url=await uploadToSupabaseStorage(b64,'role-icons');
+    if(!url){showToast(t("⚠️ Couldn't upload the image (check your Supabase Storage configuration)"));return;}
+    srv.roles[idx].iconUrl=url;
+    saveServers();renderRolesList(srv);
+  });
+}
 function toggleRolePerm(el,key,idx){
   el.classList.toggle('on');
   // If admin toggled on, enable all
@@ -6937,6 +6999,7 @@ function saveRoleEditor(idx){
   role.name=document.getElementById('re-role-name').value.trim()||role.name;
   role.color=document.getElementById('re-role-color').value;
   role.hoist=document.getElementById('re-role-hoist').classList.contains('on');
+  role.category=document.getElementById('re-role-category').value.trim()||null;
   role.permissions={};
   document.querySelectorAll('#re-perms-list [data-perm]').forEach(el=>{
     role.permissions[el.dataset.perm]=el.classList.contains('on');
@@ -7759,13 +7822,18 @@ async function showProfilePopupByUid(event,uid,info){
   popup.classList.add('open');
   popup.dataset.uid=uid;
   const liveUser=state.onlineUsers[uid]||{};
-  renderProfilePopupContent({...selfFallback,...info,...liveUser},uid,true); // loading=true, partial data
+  renderProfilePopupContent({...info,...liveUser,...selfFallback},uid,true); // loading=true, partial data
   positionProfilePopup(event);
   // Fetch full persisted profile (has avatarUrl/bannerUrl/bio even if user is offline)
   let fullUser={};
   try{const snap=await fbGet('users/'+uid);if(snap.exists())fullUser=snap.val();}catch(e){}
   if(!popup.classList.contains('open')||popup.dataset.uid!==uid||popup.dataset.reqId!==reqId)return;
-  const u={...selfFallback,...info,...fullUser,...liveUser};
+  // selfFallback is spread LAST so it always wins when viewing your own
+  // profile — it used to be spread first, meaning a stale srv.members
+  // snapshot (info) could overwrite your own current, correct in-memory
+  // data, momentarily showing an outdated frame/nameplate/effect even though
+  // the fresh data was sitting right there in state.currentUser.
+  const u={...info,...fullUser,...liveUser,...selfFallback};
   renderProfilePopupContent(u,uid,false);
   positionProfilePopup(event); // content size may have changed (bio/links/roles) — re-clamp
 }
@@ -7881,7 +7949,7 @@ function renderProfilePopupContent(u,uid,loading){
   if(links.length){const linksEl=document.createElement('div');linksEl.style.cssText='display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;';linksEl.innerHTML=links.join('');statusEl.appendChild(linksEl);}
   const srv=getServer(state.currentServerId);
   const member=(srv?.members||[]).find(m=>(m.uid||m.id)===uid);
-  document.getElementById('pp-roles').innerHTML=(member?.roles||[]).map(r=>{const role=srv?.roles?.find(ro=>ro.id===r||ro.name===r);return role?`<span class="role-badge" style="background:${role.color}25;color:${role.color}">${role.name}</span>`:`<span class="role-badge" style="background:var(--bg-4);color:var(--text-2)">${r}</span>`;}).join('');
+  document.getElementById('pp-roles').innerHTML=(member?.roles||[]).map(r=>{const role=srv?.roles?.find(ro=>ro.id===r||ro.name===r);return role?`<span class="role-badge" style="background:${role.color}25;color:${role.color}">${role.iconUrl?`<img src="${role.iconUrl}" style="width:12px;height:12px;object-fit:cover;border-radius:3px;vertical-align:-2px;margin-right:3px;">`:''}${role.name}</span>`:`<span class="role-badge" style="background:var(--bg-4);color:var(--text-2)">${r}</span>`;}).join('');
   const actEl=document.getElementById('pp-actions');
   if(uid!==state.currentUser.uid){
     const alreadyFriend=state.friends?.[uid]?.status==='accepted';
@@ -7889,24 +7957,24 @@ function renderProfilePopupContent(u,uid,loading){
     const incomingFriend=state.friends?.[uid]?.status==='incoming';
     let friendBtn='';
     if(alreadyFriend){
-      friendBtn=`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;" onclick="openDM('${uid}');closeProfilePopup()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> Amigos</button>`;
+      friendBtn=`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;" onclick="openDM('${uid}');closeProfilePopup()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> Friends</button>`;
     } else if(pendingFriend){
-      friendBtn=`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;opacity:.6;" disabled>Pendiente</button>`;
+      friendBtn=`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;opacity:.6;" disabled>Pending</button>`;
     } else if(incomingFriend){
-      friendBtn=`<button class="btn btn-primary" style="font-size:.8rem;padding:7px;" onclick="acceptFriendRequest('${uid}');closeProfilePopup()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg> Aceptar</button>`;
+      friendBtn=`<button class="btn btn-primary" style="font-size:.8rem;padding:7px;" onclick="acceptFriendRequest('${uid}');closeProfilePopup()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg> Accept</button>`;
     } else {
-      friendBtn=`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;" onclick="sendFriendRequestFromProfile('${uid}',this)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg> Añadir</button>`;
+      friendBtn=`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;" onclick="sendFriendRequestFromProfile('${uid}',this)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg> Add</button>`;
     }
     const canManage=srv&&!isServerOwner(srv,uid)&&hasPermission(state.currentUser.uid,'manage_members');
     const nickBtn=(srv&&state.currentServerId!=='__dm__'&&isServerAdmin(srv))?`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;" onclick="openNicknameModal('${uid}')" title="Apodo" data-i18n-title="Apodo"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg></button>`:'';
-    const modBtns=canManage?`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;" onclick="openTimeoutModal('${uid}')" title="Timeout" data-i18n-title="Timeout"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Timeout</button><button class="btn btn-ghost" style="font-size:.8rem;padding:7px;" onclick="kickMember('${uid}')" title="Expulsar" data-i18n-title="Expulsar"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="17" y1="8" x2="22" y2="13"/><line x1="22" y1="8" x2="17" y2="13"/></svg> Expulsar</button><button class="btn btn-danger" style="font-size:.8rem;padding:7px;" onclick="banMember('${uid}')" title="Banear" data-i18n-title="Banear"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg> Banear</button>`:'';
-    actEl.innerHTML=`<button class="btn btn-primary" style="font-size:.8rem;padding:7px;" onclick="openDM('${uid}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> Mensaje</button>${friendBtn}${isServerAdmin(srv)?`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;" onclick="manageRoles('${uid}')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7z"/><path d="M5 20h14"/></svg> Roles</button>`:''}${nickBtn}${modBtns}`;
+    const modBtns=canManage?`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;" onclick="openTimeoutModal('${uid}')" title="Timeout" data-i18n-title="Timeout"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Timeout</button><button class="btn btn-ghost" style="font-size:.8rem;padding:7px;" onclick="kickMember('${uid}')" title="Expulsar" data-i18n-title="Expulsar"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="17" y1="8" x2="22" y2="13"/><line x1="22" y1="8" x2="17" y2="13"/></svg> Kick</button><button class="btn btn-danger" style="font-size:.8rem;padding:7px;" onclick="banMember('${uid}')" title="Banear" data-i18n-title="Banear"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg> Ban</button>`:'';
+    actEl.innerHTML=`<button class="btn btn-primary" style="font-size:.8rem;padding:7px;" onclick="openDM('${uid}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> Message</button>${friendBtn}${isServerAdmin(srv)?`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;" onclick="manageRoles('${uid}')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7z"/><path d="M5 20h14"/></svg> Roles</button>`:''}${nickBtn}${modBtns}`;
   }else{
     const srv=getServer(state.currentServerId);
     const inServer=srv&&state.currentServerId!=='__dm__';
     const ownRolesBtn=(inServer&&isServerAdmin(srv))?`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;" onclick="manageRoles('${uid}')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7z"/><path d="M5 20h14"/></svg> Roles</button>`:'';
-    const ownNickBtn=inServer?`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;" onclick="openNicknameModal('${uid}')" title="Cambiar tu apodo en este servidor" data-i18n-title="Cambiar tu apodo en este servidor"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg> Apodo</button>`:'';
-    actEl.innerHTML=`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;width:100%;" onclick="openMyProfile()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Editar perfil</button>${ownRolesBtn}${ownNickBtn}`;
+    const ownNickBtn=inServer?`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;" onclick="openNicknameModal('${uid}')" title="Cambiar tu apodo en este servidor" data-i18n-title="Cambiar tu apodo en este servidor"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg> Nickname</button>`:'';
+    actEl.innerHTML=`<button class="btn btn-ghost" style="font-size:.8rem;padding:7px;width:100%;" onclick="openMyProfile()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Edit profile</button>${ownRolesBtn}${ownNickBtn}`;
   }
 }
 async function openNicknameModal(uid){
@@ -7938,7 +8006,7 @@ function manageRoles(uid){
   box.style.cssText='background:var(--bg-2);border-radius:12px;padding:24px;width:340px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,.5);';
   const currentRoles=m.roles||[];
   box.innerHTML=`<h3 style="color:var(--text-0);margin-bottom:14px;">Roles de ${m.name}</h3>`+
-    (srv.roles||[]).map(r=>`<label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer;"><input type="checkbox" value="${r.name}" ${currentRoles.includes(r.name)?'checked':''}><span class="role-badge" style="background:${r.color}25;color:${r.color}">${r.name}</span></label>`).join('')+
+    (srv.roles||[]).map(r=>`<label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer;"><input type="checkbox" value="${r.name}" ${currentRoles.includes(r.name)?'checked':''}><span class="role-badge" style="background:${r.color}25;color:${r.color}">${r.iconUrl?`<img src="${r.iconUrl}" style="width:12px;height:12px;object-fit:cover;border-radius:3px;vertical-align:-2px;margin-right:3px;">`:''}${r.name}</span></label>`).join('')+
     `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;"><button class="btn btn-ghost" id="_role-cancel">Cancelar</button><button class="btn btn-primary" id="_role-save">Guardar</button></div>`;
   overlay.appendChild(box);
   document.body.appendChild(overlay);
