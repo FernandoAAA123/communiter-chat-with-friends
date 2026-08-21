@@ -298,6 +298,27 @@ select option{background:var(--bg-3);color:var(--text-0);}
   border-bottom:none;
 }
 #channels-banner-wrap.has-banner #server-name{color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.5);}
+/* Custom two-line tooltip for verified/official servers — native title=""
+   can't render bold text on its own line above a subtitle, which is the
+   format Discord uses for its Official/Partner badge tooltip. */
+.verified-badge{cursor:default;}
+.verified-badge::after{
+  content:attr(data-tt-title);
+  position:absolute;left:50%;top:calc(100% + 8px);transform:translateX(-50%);
+  background:var(--bg-4);color:var(--text-0);font-size:.72rem;font-weight:700;
+  padding:6px 10px 2px;border-radius:6px;white-space:nowrap;
+  box-shadow:0 4px 16px rgba(0,0,0,.4);
+  opacity:0;pointer-events:none;transition:opacity .12s ease;z-index:400;
+}
+.verified-badge[data-tt-sub]:not([data-tt-sub=""])::before{
+  content:attr(data-tt-sub);
+  position:absolute;left:50%;top:calc(100% + 26px);transform:translateX(-50%);
+  background:var(--bg-4);color:var(--text-3);font-size:.68rem;font-weight:400;
+  padding:0 10px 6px;border-radius:0 0 6px 6px;white-space:nowrap;
+  box-shadow:0 4px 16px rgba(0,0,0,.4);margin-top:-4px;
+  opacity:0;pointer-events:none;transition:opacity .12s ease;z-index:400;
+}
+.verified-badge:hover::after,.verified-badge:hover::before{opacity:1;}
 #server-name{font-weight:700;font-size:.9rem;color:var(--text-0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;flex:1;letter-spacing:-.01em;}
 #server-name:hover{color:var(--accent-g);}
 #channels-list{flex:1;overflow-y:auto;padding:8px 0 8px;}
@@ -2061,6 +2082,15 @@ input[type=color]{width:32px;height:32px;border:none;border-radius:var(--r-xs);c
           <option value="private"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> <span data-i18n="Privada">Privada</span></option>
           <option value="request"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg> <span data-i18n="Por solicitud">Por solicitud</span></option>
         </select>
+        <div style="margin-bottom:20px;">
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+            <div class="toggle" id="ss-server-verified" onclick="this.classList.toggle('on');document.getElementById('ss-verified-fields').style.display=this.classList.contains('on')?'block':'none';"></div>
+            <span style="font-size:.85rem;color:var(--text-1);">Verified / Official server <span style="color:var(--text-3);">(shows a checkmark badge on the icon)</span></span>
+          </label>
+          <div id="ss-verified-fields" style="display:none;margin-top:10px;">
+            <input type="text" id="ss-verified-label" placeholder="Badge tooltip title (e.g. Communiter Official)" style="width:100%;margin-bottom:8px;">
+          </div>
+        </div>
         <div id="ss-pending-section" style="display:none;margin-bottom:20px;">
           <div class="ss-field-label" style="margin-bottom:8px;"><span data-i18n="Solicitudes pendientes">Solicitudes pendientes</span></div>
           <div id="ss-pending-list" style="display:flex;flex-direction:column;gap:6px;"></div>
@@ -2575,6 +2605,37 @@ function loadSupabaseSdkThen(cb){
   s.onerror=()=>showToast(t("⚠️ No se pudo cargar el SDK de Supabase (revisa tu conexión)"));
   document.head.appendChild(s);
 }
+// Communiter+, Server Boost, and Communiter Store used to be stored ONLY in
+// localStorage — activate one on your phone, and it was gone the moment you
+// opened Communiter on your laptop with the same account, even though
+// nothing about your account actually changed. Same root cause and same fix
+// as the language extensions bug: mirror the code to Firebase under your
+// account, and check it during login so it follows you across devices.
+async function syncExtensionCodeToAccount(key,code){
+  if(!state.currentUser)return;
+  try{ await fbSet('users/'+state.currentUser.uid+'/extensions/'+key,code||null); }
+  catch(e){ console.warn('[extensions] sync failed',key,e); }
+}
+async function loadExtensionCodesFromAccount(uid){
+  if(!uid)return;
+  try{
+    const snap=await fbGet('users/'+uid+'/extensions');
+    if(!snap||!snap.exists())return;
+    const data=snap.val()||{};
+    if(data.plus&&data.plus!==localStorage.getItem('communiterPlusCode')){
+      localStorage.setItem('communiterPlusCode',data.plus);
+      injectPlusCode(data.plus,{silent:true});
+    }
+    if(data.boost&&data.boost!==localStorage.getItem('communiterBoostCode')){
+      localStorage.setItem('communiterBoostCode',data.boost);
+      injectBoostCode(data.boost,{silent:true});
+    }
+    if(data.store&&data.store!==localStorage.getItem('communiterStoreCode')){
+      localStorage.setItem('communiterStoreCode',data.store);
+      injectStoreCode(data.store,{silent:true});
+    }
+  }catch(e){ console.warn('[extensions] account load failed',e); }
+}
 function injectPlusCode(code,{silent}={}){
   loadSupabaseSdkThen(()=>{
     try{
@@ -2602,6 +2663,7 @@ function handlePlusFileUpload(input){
   reader.onload=e=>{
     const code=e.target.result;
     localStorage.setItem('communiterPlusCode',code);
+    syncExtensionCodeToAccount('plus',code);
     injectPlusCode(code);
   };
   reader.onerror=()=>showToast(t("⚠️ No se pudo leer el archivo"));
@@ -2610,6 +2672,7 @@ function handlePlusFileUpload(input){
 }
 function deactivatePlusCode(){
   localStorage.removeItem('communiterPlusCode');
+  syncExtensionCodeToAccount('plus',null);
   showToast(t("Communiter+ desactivado — recargando..."));
   setTimeout(()=>location.reload(),700);
 }
@@ -2661,6 +2724,7 @@ function handleBoostFileUpload(input){
   reader.onload=e=>{
     const code=e.target.result;
     localStorage.setItem('communiterBoostCode',code);
+    syncExtensionCodeToAccount('boost',code);
     injectBoostCode(code);
   };
   reader.onerror=()=>showToast(t("⚠️ No se pudo leer el archivo"));
@@ -2669,6 +2733,7 @@ function handleBoostFileUpload(input){
 }
 function deactivateBoostCode(){
   localStorage.removeItem('communiterBoostCode');
+  syncExtensionCodeToAccount('boost',null);
   showToast(t("Server Boost desactivado — recargando..."));
   setTimeout(()=>location.reload(),700);
 }
@@ -2712,6 +2777,7 @@ function handleStoreFileUpload(input){
   reader.onload=e=>{
     const code=e.target.result;
     localStorage.setItem('communiterStoreCode',code);
+    syncExtensionCodeToAccount('store',code);
     injectStoreCode(code);
   };
   reader.onerror=()=>showToast(t("⚠️ No se pudo leer el archivo"));
@@ -3048,6 +3114,7 @@ async function buyStoreItem(itemId){
 }
 function deactivateStoreCode(){
   localStorage.removeItem('communiterStoreCode');
+  syncExtensionCodeToAccount('store',null);
   showToast(t("Communiter Store desactivado — recargando..."));
   setTimeout(()=>location.reload(),700);
 }
@@ -3854,6 +3921,7 @@ async function onUserLoggedIn(firebaseUser){
   if(Array.isArray(prefs.recentEmojis)) _recentEmojis=prefs.recentEmojis;
   if(Array.isArray(prefs.serverOrder)) state.serverOrder=prefs.serverOrder;
   loadLangExtensionsFromAccount(state.currentUser.uid);
+  loadExtensionCodesFromAccount(state.currentUser.uid);
 
   // Wait for the servers list, the DM list, and (if a channel was about to be
   // opened) that channel's first batch of messages to actually arrive before
@@ -4012,9 +4080,21 @@ function subscribeDMs(){
   return new Promise(resolve=>{
     let isFirst=true;
     fbOn('dms/'+state.currentUser.uid,snap=>{
+      const prevPending=new Set(Object.entries(state.dmConversations||{}).filter(([,i])=>i.requestStatus==='pending').map(([uid])=>uid));
       state.dmConversations={};
       if(snap.exists())snap.forEach(c=>{state.dmConversations[c.key]=c.val();});
       if(state.currentServerId==='__dm__')renderChannelsPanel();
+      // Message Requests is easy to miss with just a small red dot on the nav
+      // item — show an actual toast the moment a NEW request comes in (not
+      // on first load, so opening the app doesn't toast every existing
+      // pending request at once), same as any other incoming-message alert.
+      if(!isFirst){
+        Object.entries(state.dmConversations).forEach(([uid,info])=>{
+          if(info.requestStatus==='pending'&&!prevPending.has(uid)){
+            showToast(`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z" fill="none" stroke="none"/><path d="M22 6l-10 7L2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg> Message request from ${escapeHtml(info.name||'someone')}`);
+          }
+        });
+      }
       if(isFirst){isFirst=false;resolve();}
     });
   });
@@ -4292,7 +4372,6 @@ function serverFolderOf(srvId){return(state.serverFolders||[]).find(f=>(f.server
 function buildServerIconEl(srv,myServers){
   const div=document.createElement('div');
   div.className='server-icon'+(srv.id===state.currentServerId?' active':'');
-  div.title=srv.name;
   div.draggable=true;
   div.dataset.srvId=srv.id;
   const unread=serverHasUnread(srv);
@@ -4311,6 +4390,21 @@ function buildServerIconEl(srv,myServers){
     div.style.color = '#fff';
     div.style.letterSpacing = '-.02em';
     div.textContent = initials;
+  }
+  // Verified/official servers get a small checkmark badge in the corner (like
+  // Discord's Partner/Official badge) instead of the plain native tooltip —
+  // a custom two-line tooltip (bold name + subtitle) shows on hover.
+  if(srv.verified){
+    div.style.position='relative';
+    div.classList.add('verified-badge');
+    div.dataset.ttTitle=srv.verifiedLabel||(srv.name+' Official');
+    div.dataset.ttSub=srv.desc||'';
+    const vb=document.createElement('div');
+    vb.style.cssText='position:absolute;bottom:-3px;right:-3px;width:16px;height:16px;border-radius:50%;background:#5865f2;border:2px solid var(--bg-0);display:flex;align-items:center;justify-content:center;pointer-events:none;';
+    vb.innerHTML='<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+    div.appendChild(vb);
+  }else{
+    div.title=srv.name;
   }
   const isMuted=isServerMuted(srv.id);
   if(unread && !isMuted){
@@ -4532,13 +4626,15 @@ function renderChannelsPanel(){
   Object.keys(_chVoiceListeners).forEach(chId=>{fbOff('calls/'+chId+'/participants',_chVoiceListeners[chId]);delete _chVoiceListeners[chId];});
   const srv=getServer(state.currentServerId);
   const isDM=state.currentServerId==='__dm__';
-  // Discord shows a small round badge next to a server's name for servers set
-  // up as a "Community" (their term for a public, discoverable server) —
-  // recreated here as an inline SVG rather than an image asset, shown for
-  // servers with serverType 'public', the closest existing concept in this
-  // app to Discord's community designation.
-  const communityBadge=(!isDM&&srv&&srv.serverType==='public')
-    ?` <span title="Community server" style="display:inline-flex;vertical-align:-3px;width:16px;height:16px;border-radius:50%;background:var(--accent);align-items:center;justify-content:center;flex-shrink:0;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>`
+  // Discord shows a small round CHECKMARK badge next to a verified/official
+  // server's icon, with a two-line hover tooltip (bold "[Name] Official" +
+  // a subtitle below). Recreated as an inline SVG (no image asset) — driven
+  // by a dedicated srv.verified flag set in Server Settings, not by
+  // serverType, since "official/verified" is its own concept separate from
+  // just being publicly joinable. Native title="" can't do bold/two-line
+  // text, so this uses a small custom tooltip (data-tooltip + CSS) instead.
+  const communityBadge=(!isDM&&srv&&srv.verified)
+    ?` <span class="verified-badge" data-tt-title="${escapeHtml(srv.verifiedLabel||srv.name+' Official')}" data-tt-sub="${escapeHtml(srv.desc||'')}" style="display:inline-flex;vertical-align:-3px;width:16px;height:16px;border-radius:50%;background:#5865f2;align-items:center;justify-content:center;flex-shrink:0;position:relative;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>`
     :'';
   document.getElementById('server-name').innerHTML=isDM?'Direct Messages':escapeHtml(srv?.name||'')+communityBadge;
   document.getElementById('add-channel-btn').style.display=(!isDM&&srv&&hasPermission(state.currentUser.uid,'manage_channels'))?'':'none';
@@ -5003,7 +5099,7 @@ function buildMessageEl(msg,msgs,prevUid,prevTs){
       const _member=(_srv?.members||[]).find(m=>(m.uid||m.id)===msg.uid);
       if(_member?.nickname)_displayName=_member.nickname;
     }
-    wrap.innerHTML=replyHtml+`<div class="msg-group"><div class="msg-avatar" style="${avatarStyle}" data-uid="${msg.uid}">${avatarContent}</div><div class="msg-body">${forwardBadge}<div class="msg-meta"><span class="msg-author" style="color:${_nameColor}" data-uid="${msg.uid}">${_displayName}${botBadge}</span><span class="msg-time">${fmtDateTime(msg.ts)}</span>${msg.pinned?'<span style="font-size:.65rem;color:var(--yellow);"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg></span>':''}</div><div class="${mainClass}">${formatContent(_displayContent2)}${mediaHtml(msg)}</div>${msg.edited?'<span class="msg-edited">(editado)</span>':''}${reactionsHtml(msg)}</div><div class="msg-hover-actions">${hoverBtns(msg,isMe)}</div></div>`;
+    wrap.innerHTML=replyHtml+`<div class="msg-group"><div class="msg-avatar" style="${avatarStyle}" data-uid="${msg.uid}" title="${escapeHtml(_displayName.replace(/<[^>]*>/g,''))}">${avatarContent}</div><div class="msg-body">${forwardBadge}<div class="msg-meta"><span class="msg-author" style="color:${_nameColor}" data-uid="${msg.uid}">${_displayName}${botBadge}</span><span class="msg-time">${fmtDateTime(msg.ts)}</span>${msg.pinned?'<span style="font-size:.65rem;color:var(--yellow);"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg></span>':''}</div><div class="${mainClass}">${formatContent(_displayContent2)}${mediaHtml(msg)}</div>${msg.edited?'<span class="msg-edited">(editado)</span>':''}${reactionsHtml(msg)}</div><div class="msg-hover-actions">${hoverBtns(msg,isMe)}</div></div>`;
   }
   upgradeLinkEmbeds(wrap);
   return wrap;
@@ -6347,6 +6443,12 @@ function openServerSettings(){
   // Fill general fields
   document.getElementById('ss-server-name').value=srv.name;
   if(document.getElementById('ss-server-type'))document.getElementById('ss-server-type').value=srv.serverType||'public';
+  const verifiedToggle=document.getElementById('ss-server-verified');
+  if(verifiedToggle){
+    verifiedToggle.classList.toggle('on',!!srv.verified);
+    document.getElementById('ss-verified-fields').style.display=srv.verified?'block':'none';
+    document.getElementById('ss-verified-label').value=srv.verifiedLabel||'';
+  }
   renderBoostWidget(srv);
   renderServerIdWidget(srv);
   if(typeof fetchServerBoosts==='function')fetchServerBoosts(srv.id).then(()=>renderBoostWidget(srv));
@@ -6543,6 +6645,11 @@ function saveServerSettings(){
   const srv=getServer(state.currentServerId);if(!srv)return;
   if(!hasPermission(state.currentUser.uid,'manage_server')){showToast(t("⚠️ No tienes permiso para editar este servidor"));return;}
   const ssTypeEl=document.getElementById('ss-server-type');if(ssTypeEl)srv.serverType=ssTypeEl.value;
+  const verifiedToggle=document.getElementById('ss-server-verified');
+  if(verifiedToggle){
+    srv.verified=verifiedToggle.classList.contains('on');
+    srv.verifiedLabel=document.getElementById('ss-verified-label').value.trim()||null;
+  }
   const name=document.getElementById('ss-server-name').value.trim();
   if(!name){showToast(t("⚠️ Nombre requerido"));return;}
   const oldName=srv.name;
@@ -6885,8 +6992,18 @@ function renderRolesList(srv){
         e.preventDefault();div.style.outline='';
         const from=parseInt(e.dataTransfer.getData('roleIdx'));
         if(isNaN(from)||from===i)return;
+        // Dropping onto a role now also adopts that role's category — before,
+        // this only spliced the underlying array by raw index, which ignored
+        // the fact the list is now GROUPED by category for display. Dragging
+        // a role from one category's section onto a role in a different
+        // section looked broken: the role would silently vanish from where
+        // you dropped it (or reappear in the wrong group on the next
+        // render), because its category field was never updated to match.
+        const targetCategory=srv.roles[i].category||null;
         const [moved]=srv.roles.splice(from,1);
-        srv.roles.splice(i,0,moved);
+        moved.category=targetCategory;
+        const newIdx=from<i?i-1:i;
+        srv.roles.splice(newIdx,0,moved);
         saveServers();renderRolesList(srv);
       });
     }
