@@ -19,7 +19,7 @@
 <link rel="shortcut icon" type="image/png" href="https://chibi.iitranq.co.uk/Y1OMxvpQecD2.png?v=2">
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getDatabase, ref, set, push, onValue, onChildAdded, onDisconnect, remove, get, off, update, query, orderByChild, limitToLast, startAt }
+  import { getDatabase, ref, set, push, onValue, onChildAdded, onChildChanged, onChildRemoved, onDisconnect, remove, get, off, update, query, orderByChild, limitToLast, startAt }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
   import { getAuth, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword,
     signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, setPersistence, browserLocalPersistence }
@@ -60,6 +60,7 @@
   window._auth = auth;
   window._fbRef = ref; window._fbSet = set; window._fbPush = push;
   window._fbOnValue = onValue; window._fbOnChildAdded = onChildAdded;
+  window._fbOnChildChanged = onChildChanged; window._fbOnChildRemoved = onChildRemoved;
   window._fbOff = off; window._fbOnDisconnect = onDisconnect;
   window._fbQuery = query; window._fbOrderByChild = orderByChild; window._fbLimitToLast = limitToLast; window._fbStartAt = startAt;
   window._fbRemove = remove; window._fbGet = get; window._fbUpdate = update;
@@ -298,27 +299,8 @@ select option{background:var(--bg-3);color:var(--text-0);}
   border-bottom:none;
 }
 #channels-banner-wrap.has-banner #server-name{color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.5);}
-/* Custom two-line tooltip for verified/official servers — native title=""
-   can't render bold text on its own line above a subtitle, which is the
-   format Discord uses for its Official/Partner badge tooltip. */
-.verified-badge{cursor:default;}
-.verified-badge::after{
-  content:attr(data-tt-title);
-  position:absolute;left:50%;top:calc(100% + 8px);transform:translateX(-50%);
-  background:var(--bg-4);color:var(--text-0);font-size:.72rem;font-weight:700;
-  padding:6px 10px 2px;border-radius:6px;white-space:nowrap;
-  box-shadow:0 4px 16px rgba(0,0,0,.4);
-  opacity:0;pointer-events:none;transition:opacity .12s ease;z-index:400;
-}
-.verified-badge[data-tt-sub]:not([data-tt-sub=""])::before{
-  content:attr(data-tt-sub);
-  position:absolute;left:50%;top:calc(100% + 26px);transform:translateX(-50%);
-  background:var(--bg-4);color:var(--text-3);font-size:.68rem;font-weight:400;
-  padding:0 10px 6px;border-radius:0 0 6px 6px;white-space:nowrap;
-  box-shadow:0 4px 16px rgba(0,0,0,.4);margin-top:-4px;
-  opacity:0;pointer-events:none;transition:opacity .12s ease;z-index:400;
-}
-.verified-badge:hover::after,.verified-badge:hover::before{opacity:1;}
+.server-name-tooltip{cursor:default;}
+#server-name-tooltip-el{position:fixed;display:none;background:var(--bg-4);color:var(--text-0);font-size:.8rem;font-weight:700;padding:6px 12px;border-radius:6px;white-space:nowrap;box-shadow:0 4px 16px rgba(0,0,0,.4);z-index:5000;pointer-events:none;align-items:center;gap:6px;}
 #server-name{font-weight:700;font-size:.9rem;color:var(--text-0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;flex:1;letter-spacing:-.01em;}
 #server-name:hover{color:var(--accent-g);}
 #channels-list{flex:1;overflow-y:auto;padding:8px 0 8px;}
@@ -1100,6 +1082,7 @@ input[type=color]{width:32px;height:32px;border:none;border-radius:var(--r-xs);c
         <div class="utag" id="utag-display">#0000</div>
       </div>
       <button class="icon-btn" title="Migrar UID (admin)" data-i18n-title="Migrar UID (admin)" onclick="openAdminMigrateModal()" id="admin-migrate-btn" style="display:none;color:var(--yellow);"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M8 3H3v5"/><path d="M3 16v5h5"/><path d="M16 21h5v-5"/><path d="M15 9l6-6"/><path d="M9 15l-6 6"/></svg></button>
+      <button class="icon-btn" title="Verification requests (admin)" onclick="openVerificationAdminPanel()" id="admin-verify-btn" style="display:none;color:#5865f2;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
       <button class="icon-btn" title="Micrófono" data-i18n-title="Micrófono" onclick="toggleMute()" id="mute-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
       <button class="icon-btn" title="Cerrar sesión" data-i18n-title="Cerrar sesión" onclick="doSignOut()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></button>
     </div>
@@ -2082,14 +2065,16 @@ input[type=color]{width:32px;height:32px;border:none;border-radius:var(--r-xs);c
           <option value="private"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> <span data-i18n="Privada">Privada</span></option>
           <option value="request"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg> <span data-i18n="Por solicitud">Por solicitud</span></option>
         </select>
-        <div style="margin-bottom:20px;">
+        <div style="margin-bottom:14px;">
           <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
-            <div class="toggle" id="ss-server-verified" onclick="this.classList.toggle('on');document.getElementById('ss-verified-fields').style.display=this.classList.contains('on')?'block':'none';"></div>
-            <span style="font-size:.85rem;color:var(--text-1);">Verified / Official server <span style="color:var(--text-3);">(shows a checkmark badge on the icon)</span></span>
+            <div class="toggle" id="ss-server-community" onclick="this.classList.toggle('on')"></div>
+            <span style="font-size:.85rem;color:var(--text-1);">Enable Community <span style="color:var(--text-3);">(shows a house/globe badge on the icon — globe appears automatically once you pass 100 human members)</span></span>
           </label>
-          <div id="ss-verified-fields" style="display:none;margin-top:10px;">
-            <input type="text" id="ss-verified-label" placeholder="Badge tooltip title (e.g. Communiter Official)" style="width:100%;margin-bottom:8px;">
-          </div>
+        </div>
+        <div style="margin-bottom:20px;">
+          <div class="ss-field-label" style="margin-bottom:6px;">Verification</div>
+          <div style="font-size:.78rem;color:var(--text-3);margin-bottom:8px;">The checkmark badge can't be turned on by yourself — it has to be reviewed and approved by Communiter's own admins, not just this server's admins. Request it below and it'll show once approved.</div>
+          <div id="ss-verification-status"></div>
         </div>
         <div id="ss-pending-section" style="display:none;margin-bottom:20px;">
           <div class="ss-field-label" style="margin-bottom:8px;"><span data-i18n="Solicitudes pendientes">Solicitudes pendientes</span></div>
@@ -3819,6 +3804,8 @@ async function onUserLoggedIn(firebaseUser){
   }
   const adminBtn=document.getElementById('admin-migrate-btn');
   if(adminBtn)adminBtn.style.display=(state.currentUser.uid===ADMIN_UID)?'':'none';
+  const adminVerifyBtn=document.getElementById('admin-verify-btn');
+  if(adminVerifyBtn)adminVerifyBtn.style.display=(state.currentUser.uid===ADMIN_UID)?'':'none';
 
   const presRef=fbRef('presence/'+state.currentUser.uid);
   const presData={uid:state.currentUser.uid,name:state.currentUser.name,avatarUrl:state.currentUser.avatarUrl||'',nameColor:state.currentUser.nameColor,status:state.currentUser.status||'online',customStatus:state.currentUser.customStatus||'',activity:state.currentUser.activity||null,ts:Date.now()};
@@ -3981,9 +3968,18 @@ async function onUserLoggedIn(firebaseUser){
 // ── SUBSCRIPTIONS ──
 let _presenceRenderTimer=null;
 function subscribePresence(){
-  fbOn('presence',snap=>{
-    state.onlineUsers={};
-    if(snap.exists())snap.forEach(c=>{const u=c.val();state.onlineUsers[u.uid]=u;});
+  // This used to be a single onValue() listener on the WHOLE presence node.
+  // onValue always delivers the node's ENTIRE current content on every
+  // change — not just what changed. With N users each heartbeating every
+  // 25s (plus every status/activity/profile change), that's N presence
+  // writes per 25s, each one re-downloading ALL N users' presence data to
+  // EVERY connected client: traffic grows roughly with the SQUARE of your
+  // user count, not linearly. This got worse once cosmetic fields were added
+  // to each presence entry (more bytes per re-download). Switched to
+  // child_added/child_changed/child_removed, which only transfer the ONE
+  // entry that actually changed — the fix this bug actually needed.
+  const presRef=fbRef('presence');
+  const scheduleRender=()=>{
     // Before, this would re-render EVERYTHING (member panel + a full
     // querySelectorAll sweep of the whole DOM) on EVERY presence change from
     // ANY user across the whole app, whether or not related to what
@@ -3996,7 +3992,10 @@ function subscribePresence(){
       if(state.currentServerId==='__dm__'&&!state.currentChannelId)renderFriendsPage();
       updateAvatarsInDOM();
     },300);
-  });
+  };
+  window._fbOnChildAdded(presRef,snap=>{const u=snap.val();if(u&&u.uid)state.onlineUsers[u.uid]=u;scheduleRender();});
+  window._fbOnChildChanged(presRef,snap=>{const u=snap.val();if(u&&u.uid)state.onlineUsers[u.uid]=u;scheduleRender();});
+  window._fbOnChildRemoved(presRef,snap=>{const u=snap.val();if(u&&u.uid)delete state.onlineUsers[u.uid];scheduleRender();});
 }
 function updateAvatarsInDOM(){
   // Before, this only updated ONLINE users (state.onlineUsers) live —
@@ -4100,22 +4099,34 @@ function subscribeDMs(){
   });
 }
 function subscribeTypingGlobal(){
-  fbOn('typing',snap=>{
-    if(!snap.exists()){state.typingUsers={};renderTyping();return;}
+  // Same bug and same fix as subscribePresence(): this was a single onValue()
+  // on the whole 'typing' node, so every keystroke from ANYONE, in ANY
+  // channel, on the ENTIRE app, re-downloaded every other currently-typing
+  // user's data to every connected client. Typing events fire far more often
+  // than presence heartbeats, so this was likely the single biggest
+  // contributor to the download bandwidth problem. Now a local cache
+  // (rawTyping) is updated incrementally via child_added/changed/removed —
+  // only the ONE entry that changed gets transferred — and the per-channel
+  // grouping/4-second expiry logic (unchanged) runs entirely in JS against
+  // that local cache, no extra Firebase reads involved.
+  const typingRef=fbRef('typing');
+  const rawTyping={};
+  function rebuildAndRender(){
     const now=Date.now();
-    // Rebuild fresh to avoid accumulation
     const fresh={};
-    snap.forEach(child=>{
-      const info=child.val();
-      if(child.key===state.currentUser.uid)return;
-      if(now-info.ts<4000){
+    Object.entries(rawTyping).forEach(([uid,info])=>{
+      if(uid===state.currentUser.uid)return;
+      if(info&&now-info.ts<4000){
         if(!fresh[info.channelId])fresh[info.channelId]={};
-        fresh[info.channelId][child.key]={name:info.name,ts:info.ts};
+        fresh[info.channelId][uid]={name:info.name,ts:info.ts};
       }
     });
     state.typingUsers=fresh;
     renderTyping();
-  });
+  }
+  window._fbOnChildAdded(typingRef,snap=>{rawTyping[snap.key]=snap.val();rebuildAndRender();});
+  window._fbOnChildChanged(typingRef,snap=>{rawTyping[snap.key]=snap.val();rebuildAndRender();});
+  window._fbOnChildRemoved(typingRef,snap=>{delete rawTyping[snap.key];rebuildAndRender();});
 }
 let _pruningInFlight={};
 let _lastPruneCheck={}; // channelId -> timestamp of the last time the (expensive) prune check actually ran
@@ -4391,21 +4402,33 @@ function buildServerIconEl(srv,myServers){
     div.style.letterSpacing = '-.02em';
     div.textContent = initials;
   }
-  // Verified/official servers get a small checkmark badge in the corner (like
-  // Discord's Partner/Official badge) instead of the plain native tooltip —
-  // a custom two-line tooltip (bold name + subtitle) shows on hover.
-  if(srv.verified){
+  // Community badge — a server owner can enable "Community" in Server
+  // Settings (srv.isCommunity), same as Discord's Community toggle. Which
+  // icon shows is NOT part of that toggle, it's computed automatically:
+  // house = community with under 100 human members, globe = 100+. Bots
+  // don't count toward the threshold. This is entirely separate from
+  // verification (see the name-adjacent badge in showServerNameTooltip/
+  // buildServerNameHtml) — verification can't be self-toggled and isn't
+  // shown on the icon at all.
+  if(srv.isCommunity){
+    const humanCount=(srv.members||[]).filter(m=>!(m.uid||m.id||'').startsWith('bot_')).length;
+    const isLarge=humanCount>=100;
     div.style.position='relative';
-    div.classList.add('verified-badge');
-    div.dataset.ttTitle=srv.verifiedLabel||(srv.name+' Official');
-    div.dataset.ttSub=srv.desc||'';
-    const vb=document.createElement('div');
-    vb.style.cssText='position:absolute;bottom:-3px;right:-3px;width:16px;height:16px;border-radius:50%;background:#5865f2;border:2px solid var(--bg-0);display:flex;align-items:center;justify-content:center;pointer-events:none;';
-    vb.innerHTML='<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-    div.appendChild(vb);
-  }else{
-    div.title=srv.name;
+    const cb=document.createElement('div');
+    cb.style.cssText='position:absolute;bottom:-3px;right:-3px;width:16px;height:16px;border-radius:50%;background:var(--bg-1);border:2px solid var(--bg-0);display:flex;align-items:center;justify-content:center;pointer-events:none;color:var(--text-1);';
+    cb.innerHTML=isLarge
+      ?'<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>'
+      :'<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>';
+    div.appendChild(cb);
   }
+  // Discord shows a small pill with the server's name to the RIGHT of the
+  // icon on hover — this was missing here entirely (icons either had no
+  // tooltip, or briefly showed one below the icon in an earlier attempt,
+  // which didn't match). Verified servers show the checkmark INSIDE this
+  // pill, next to the name text — never on the icon itself.
+  div.classList.add('server-name-tooltip');
+  div.dataset.ttName=srv.name;
+  if(srv.verified)div.dataset.ttVerified='1';
   const isMuted=isServerMuted(srv.id);
   if(unread && !isMuted){
     const pill=document.createElement('div');
@@ -4742,6 +4765,32 @@ function renderChannelsPanel(){
       });
     }
     group.appendChild(hdr);
+    // Drop zone for the category body itself — without this, a channel
+    // could only be dropped onto ANOTHER channel item (for reordering) or
+    // the category header (for reordering categories). An empty category
+    // had no valid drop target at all, so a channel could never be dragged
+    // into it — this made empty categories effectively "stuck": you could
+    // create one, but never actually move anything into it.
+    if(isServerAdmin(srv)){
+      group.addEventListener('dragover',e=>{
+        if(e.target.closest('.channel-item')||e.target.closest('.channel-group-header'))return;
+        e.preventDefault();group.style.outline='1px dashed var(--accent)';
+      });
+      group.addEventListener('dragleave',e=>{if(e.target===group)group.style.outline='';});
+      group.addEventListener('drop',e=>{
+        if(e.target.closest('.channel-item')||e.target.closest('.channel-group-header'))return;
+        e.preventDefault();group.style.outline='';
+        if(e.dataTransfer.getData('type')!=='ch')return;
+        const from=parseInt(e.dataTransfer.getData('chIdx'));
+        const fromCatId=e.dataTransfer.getData('catId');
+        const srcCat=srv.channels.find(c=>c.id===fromCatId);
+        if(!srcCat)return;
+        const [moved]=srcCat.children.splice(from,1);
+        if(!Array.isArray(cat.children))cat.children=[];
+        cat.children.push(moved);
+        saveServers();renderChannelsPanel();
+      });
+    }
 
     (cat.children||[]).forEach((ch,chIdx)=>{
       const unread=isChannelMuted(ch.id)?0:(state.unreadCounts[ch.id]||0);
@@ -4802,6 +4851,10 @@ function renderChannelsPanel(){
         titem.className='thread-item'+(thread.id===state.currentChannelId?' active':'');
         titem.innerHTML=`<span style="color:var(--text-3);font-size:.8rem;">↳</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${thread.name}</span>`;
         titem.onclick=()=>selectChannel(thread.id);
+        // There was previously no way to remove a thread once created —
+        // they just piled up forever, going stale with no path to clean
+        // them out. Right-click/long-press now offers to delete one.
+        titem.oncontextmenu=e=>{e.preventDefault();showThreadCtx(e,ch,thread);};
         group.appendChild(titem);
       });
     });
@@ -4966,14 +5019,22 @@ function renderForumPosts(ch){
     ${posts.length?posts.map(p=>{
       const srvA=getServer(state.currentServerId);
       const canDel=p.uid===state.currentUser?.uid||isServerAdmin(srvA);
+      // Same fix as elsewhere: prefer live data (your own profile, or live
+      // presence for others online) over the snapshot stored on the post at
+      // creation time — a forum post stays visible far longer than a chat
+      // message, so a stale photo/name/color here is much more noticeable.
+      const live=(p.uid===state.currentUser?.uid)?state.currentUser:state.onlineUsers[p.uid];
+      const pName=(live&&live.name)||p.name||'?';
+      const pColor=(live&&live.color)||p.color||getAutoAvatarColor(p.uid||pName);
+      const pAvatarUrl=(live&&live.avatarUrl)||p.avatarUrl;
       return`
       <div onclick="openForumPost('${ch.id}','${p.id}')" style="background:var(--bg-3);border:1px solid var(--border);border-radius:14px;overflow:hidden;cursor:pointer;transition:all .15s;position:relative;display:flex;flex-direction:column;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
         ${p.coverImg?`<img src="${p.coverImg}" alt="" style="width:100%;aspect-ratio:16/9;object-fit:cover;display:block;">`:''}
         ${canDel?`<button onclick="event.stopPropagation();deleteForumPost('${ch.id}','${p.id}')" title="Eliminar" data-i18n-title="Eliminar" style="position:absolute;top:10px;right:10px;background:rgba(0,0,0,.45);backdrop-filter:blur(4px);border:none;color:#fff;width:26px;height:26px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>`:''}
         <div style="padding:16px;flex:1;display:flex;flex-direction:column;">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
-          <div style="width:28px;height:28px;border-radius:8px;background:${p.color};display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:700;color:#fff;flex-shrink:0;">${(p.name||'?')[0].toUpperCase()}</div>
-          <span style="font-size:.8rem;font-weight:600;color:${p.color}">${p.name}</span>
+          <div style="width:28px;height:28px;border-radius:8px;background:${pAvatarUrl?'#000':pColor};display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:700;color:#fff;flex-shrink:0;overflow:hidden;">${pAvatarUrl?`<img src="${pAvatarUrl}" style="width:100%;height:100%;object-fit:cover;">`:(pName||'?')[0].toUpperCase()}</div>
+          <span style="font-size:.8rem;font-weight:600;color:${pColor}">${escapeHtml(pName)}</span>
           <span style="font-size:.72rem;color:var(--text-3);">${fmtDateTime(p.ts)}</span>
           ${p.tags?.map(t=>`<span style="background:var(--accent-glow);color:var(--accent-g);border-radius:20px;padding:1px 8px;font-size:.65rem;font-weight:700;">${t}</span>`).join('')||''}
         </div>
@@ -6443,12 +6504,9 @@ function openServerSettings(){
   // Fill general fields
   document.getElementById('ss-server-name').value=srv.name;
   if(document.getElementById('ss-server-type'))document.getElementById('ss-server-type').value=srv.serverType||'public';
-  const verifiedToggle=document.getElementById('ss-server-verified');
-  if(verifiedToggle){
-    verifiedToggle.classList.toggle('on',!!srv.verified);
-    document.getElementById('ss-verified-fields').style.display=srv.verified?'block':'none';
-    document.getElementById('ss-verified-label').value=srv.verifiedLabel||'';
-  }
+  const communityToggle=document.getElementById('ss-server-community');
+  if(communityToggle)communityToggle.classList.toggle('on',!!srv.isCommunity);
+  renderVerificationStatus(srv);
   renderBoostWidget(srv);
   renderServerIdWidget(srv);
   if(typeof fetchServerBoosts==='function')fetchServerBoosts(srv.id).then(()=>renderBoostWidget(srv));
@@ -6641,15 +6699,73 @@ function logAudit(action, icon){
   if(srv.auditLog.length>100)srv.auditLog.shift();
   saveServers();
 }
+// ── VERIFICATION (checkmark badge) ──
+// Deliberately NOT a self-service toggle: srv.verified can only become true
+// through approveVerification() below, which is gated to ADMIN_UID — the
+// app's own admin, not a server's own admin/owner. A server owner can only
+// request it; the request sits in a global queue until reviewed.
+// NOTE: this enforces the correct flow/UI, but true security against someone
+// editing srv.verified directly via devtools/Firebase console still depends
+// on your Firebase rules restricting writes to that field to ADMIN_UID only
+// — same as the existing UID-migration admin panel already relies on rules
+// for its own protection, this follows the same pattern.
+function renderVerificationStatus(srv){
+  const el=document.getElementById('ss-verification-status');if(!el)return;
+  if(srv.verified){
+    el.innerHTML=`<div style="display:flex;align-items:center;gap:8px;color:var(--green);font-size:.85rem;"><span style="display:inline-flex;width:16px;height:16px;border-radius:50%;background:#5865f2;align-items:center;justify-content:center;flex-shrink:0;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span> Verified</div>`;
+  }else if(srv.verifiedRequestStatus==='pending'){
+    el.innerHTML=`<div style="font-size:.85rem;color:var(--yellow);">⏳ Request pending review</div>`;
+  }else{
+    el.innerHTML=`<button class="btn btn-ghost btn-sm" onclick="requestVerification('${srv.id}')">Request verification</button>${srv.verifiedRequestStatus==='rejected'?'<div style="font-size:.75rem;color:var(--text-3);margin-top:6px;">Your last request wasn\'t approved.</div>':''}`;
+  }
+}
+async function requestVerification(srvId){
+  const srv=getServer(srvId);if(!srv)return;
+  await fbSet('verificationRequests/'+srvId,{srvId,srvName:srv.name,requestedBy:state.currentUser.uid,requestedByName:state.currentUser.name,requestedAt:Date.now(),status:'pending'});
+  srv.verifiedRequestStatus='pending';saveServers();
+  renderVerificationStatus(srv);
+  showToast('✅ Verification requested');
+}
+// ── App-admin verification review panel (ADMIN_UID only) ──
+async function openVerificationAdminPanel(){
+  if(state.currentUser.uid!==ADMIN_UID)return;
+  const snap=await fbGet('verificationRequests');
+  const requests=snap&&snap.exists()?Object.values(snap.val()).filter(r=>r.status==='pending'):[];
+  const overlay=document.createElement('div');
+  overlay.style.cssText='position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;';
+  overlay.innerHTML=`<div style="width:420px;max-height:80vh;overflow-y:auto;background:var(--bg-2);border-radius:16px;padding:24px;">
+    <h2 style="margin-bottom:14px;">Verification requests</h2>
+    ${requests.length?requests.map(r=>`<div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg-3);border-radius:10px;margin-bottom:8px;">
+      <div style="flex:1;min-width:0;"><div style="font-weight:600;font-size:.85rem;">${escapeHtml(r.srvName)}</div><div style="font-size:.72rem;color:var(--text-3);">by ${escapeHtml(r.requestedByName||'?')}</div></div>
+      <button class="btn btn-primary btn-sm" onclick="approveVerification('${r.srvId}');this.closest('[style*=fixed]').remove()">Approve</button>
+      <button class="btn btn-ghost btn-sm" onclick="rejectVerification('${r.srvId}');this.closest('[style*=fixed]').remove()">Reject</button>
+    </div>`).join(''):'<div style="color:var(--text-3);font-size:.85rem;text-align:center;padding:20px;">No pending requests.</div>'}
+    <button class="btn btn-ghost" style="width:100%;margin-top:10px;" onclick="this.closest('[style*=fixed]').remove()">Close</button>
+  </div>`;
+  overlay.onclick=e=>{if(e.target===overlay)overlay.remove();};
+  document.body.appendChild(overlay);
+}
+async function approveVerification(srvId){
+  if(state.currentUser.uid!==ADMIN_UID)return;
+  const srv=getServer(srvId);
+  if(srv){srv.verified=true;srv.verifiedRequestStatus='approved';saveServers();}
+  else{ await fbUpdate('state/servers/'+srvId,{verified:true,verifiedRequestStatus:'approved'}); }
+  await fbSet('verificationRequests/'+srvId+'/status','approved');
+  showToast('✅ Approved');
+}
+async function rejectVerification(srvId){
+  if(state.currentUser.uid!==ADMIN_UID)return;
+  const srv=getServer(srvId);
+  if(srv){srv.verifiedRequestStatus='rejected';saveServers();}
+  await fbSet('verificationRequests/'+srvId+'/status','rejected');
+  showToast('Rejected');
+}
 function saveServerSettings(){
   const srv=getServer(state.currentServerId);if(!srv)return;
   if(!hasPermission(state.currentUser.uid,'manage_server')){showToast(t("⚠️ No tienes permiso para editar este servidor"));return;}
   const ssTypeEl=document.getElementById('ss-server-type');if(ssTypeEl)srv.serverType=ssTypeEl.value;
-  const verifiedToggle=document.getElementById('ss-server-verified');
-  if(verifiedToggle){
-    srv.verified=verifiedToggle.classList.contains('on');
-    srv.verifiedLabel=document.getElementById('ss-verified-label').value.trim()||null;
-  }
+  const communityToggle=document.getElementById('ss-server-community');
+  if(communityToggle)srv.isCommunity=communityToggle.classList.contains('on');
   const name=document.getElementById('ss-server-name').value.trim();
   if(!name){showToast(t("⚠️ Nombre requerido"));return;}
   const oldName=srv.name;
@@ -9303,6 +9419,37 @@ function showChannelCtx(e,ch,srv){
   menu.innerHTML=`<div class="ctx-item" onclick="selectChannel('${ch.id}');closeCtx()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg> Go to channel</div><div class="ctx-item" onclick="markChannelReadCtx('${ch.id}');closeCtx()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> Mark as read</div><div class="ctx-item" onclick="toggleMuteChannel('${ch.id}');closeCtx()">${muted?'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg> Unmute channel':'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg> Mute channel'}</div>${isServerAdmin(srv)?`<div class="ctx-sep"></div><div class="ctx-item" onclick="openEditChannel('${ch.id}','${srv.id}');closeCtx()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg> Edit channel</div><div class="ctx-item danger" onclick="deleteChannel('${ch.id}','${srv.id}');closeCtx()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg> Delete channel</div>`:''}`;
   positionCtxMenu(menu,e);
 }
+function showThreadCtx(e,ch,thread){
+  const menu=document.getElementById('context-menu');
+  const srv=getServer(state.currentServerId);
+  const canDelete=thread.createdBy===state.currentUser.uid||isServerAdmin(srv);
+  menu.innerHTML=`<div class="ctx-item" onclick="selectChannel('${thread.id}');closeCtx()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg> Go to thread</div>${canDelete?`<div class="ctx-sep"></div><div class="ctx-item danger" onclick="deleteThread('${ch.id}','${thread.id}');closeCtx()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg> Delete thread</div>`:''}`;
+  positionCtxMenu(menu,e);
+}
+// Threads previously had NO way to be deleted once created — they just
+// accumulated forever with no path to clean up an old/inactive one. Mirrors
+// deleteChannel(): also purges the thread's messages (and their Supabase
+// files) instead of leaving them orphaned in Firebase.
+async function deleteThread(chId,threadId){
+  const srv=getServer(state.currentServerId);if(!srv)return;
+  const parent=getChannel(chId,srv);if(!parent)return;
+  if(!(await cmtrConfirm('Delete this thread? Its messages will also be deleted.',{danger:true,okText:'Delete'})))return;
+  parent.threads=(parent.threads||[]).filter(t=>t.id!==threadId);
+  saveServers();
+  if(state.currentChannelId===threadId){state.currentChannelId=chId;selectChannel(chId);}
+  renderChannelsPanel();
+  showToast('✅ Thread deleted');
+  (async()=>{
+    try{
+      const snap=await fbGet('state/messages/'+threadId);
+      if(snap&&snap.exists()){
+        const msgs=Object.values(snap.val());
+        for(const m of msgs){ await deleteMessageSupabaseFiles(m); }
+      }
+      await fbRemove('state/messages/'+threadId);
+    }catch(e){ console.warn('[deleteThread] cleanup error',e); }
+  })();
+}
 // Marks a single channel as read from the context menu (right-click)
 function markChannelReadCtx(chId){
   markChannelRead(chId);
@@ -9470,6 +9617,32 @@ window.addEventListener('resize',checkMobile);
 document.addEventListener('DOMContentLoaded',checkMobile);
 document.addEventListener('DOMContentLoaded',spotifyHandleRedirect);
 document.addEventListener('DOMContentLoaded',handleInviteLinkOnLoad);
+document.addEventListener('DOMContentLoaded',initServerNameTooltips);
+// Discord shows a small pill with the server's name to the right of its icon
+// on hover — needs real DOM (icon SVG + text), which plain CSS content:attr()
+// can't do, so it's a single shared tooltip element positioned in JS.
+function initServerNameTooltips(){
+  const tt=document.createElement('div');
+  tt.id='server-name-tooltip-el';
+  document.body.appendChild(tt);
+  document.body.addEventListener('mouseover',e=>{
+    const el=e.target.closest('.server-name-tooltip');
+    if(!el)return;
+    const rect=el.getBoundingClientRect();
+    const verified=el.dataset.ttVerified==='1';
+    tt.innerHTML=(verified?'<span style="display:inline-flex;width:14px;height:14px;border-radius:50%;background:#5865f2;align-items:center;justify-content:center;flex-shrink:0;"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>':'')+'<span>'+escapeHtml(el.dataset.ttName||'')+'</span>';
+    tt.style.display='flex';
+    tt.style.left=(rect.right+10)+'px';
+    tt.style.top=(rect.top+rect.height/2)+'px';
+    tt.style.transform='translateY(-50%)';
+  });
+  document.body.addEventListener('mouseout',e=>{
+    const el=e.target.closest('.server-name-tooltip');
+    if(!el)return;
+    if(e.relatedTarget&&e.relatedTarget.closest&&e.relatedTarget.closest('.server-name-tooltip')===el)return;
+    tt.style.display='none';
+  });
+}
 window.addEventListener('load',checkMobile);
 
 // ── PWA: instalar Communiter como app ──
