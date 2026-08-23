@@ -3337,6 +3337,15 @@ function markChannelRead(chId){
 // @yourName or with @everyone/@here.
 const MENTION_SCAN_LIMIT=30; // how many recent messages we check per channel, not just the last one
 function subscribeAllChannelsActivity(){
+  // Guard: subscribeServers() starts before prefs (lastRead) finish loading, and its
+  // first snapshot can arrive from Firebase's local cache almost instantly — before
+  // state.lastRead is populated. If we ran this now, every channel's "does this
+  // mention me" check would compare against read=0, and that WRONG result would get
+  // stuck in state.channelMentions until a real new message arrives in that channel
+  // (this listener only refires on data changes, not when lastRead changes later).
+  // So we bail out here and rely on the explicit re-call right after lastRead loads
+  // (see state._lastReadLoaded=true below).
+  if(!state._lastReadLoaded)return;
   Object.values(_chActivityListeners).forEach(unsub=>{try{unsub();}catch(e){}});
   Object.keys(_chActivityListeners).forEach(k=>delete _chActivityListeners[k]);
   const uid=state.currentUser?.uid;
@@ -3877,6 +3886,12 @@ async function onUserLoggedIn(firebaseUser){
   if(lastCh)state.currentChannelId=lastCh;
   state.lastRead=prefs.lastRead||{};
   state._lastReadLoaded=true;
+  // subscribeAllChannelsActivity() bails out early while lastRead wasn't loaded yet
+  // (it may have already tried once, from the state/servers listener firing early —
+  // see the guard inside that function). Now that lastRead is actually ready, run it
+  // for real so mention flags get computed against the correct read timestamps
+  // instead of getting stuck comparing against 0.
+  subscribeAllChannelsActivity();
   // If reading prefs failed due to a timeout (slow connection on startup), do NOT
   // we assumed liteMode=false — that silently turned off Lite Mode every time
   // Firebase was taking too long. We use the localStorage backup as the source of
@@ -5694,6 +5709,7 @@ async function sendMessage(){
     writeDmConversationEntries(u.uid,otherUid,u,otherInfo,lastMsgPreview);
   }else{
     fbSet('state/messages/'+state.currentChannelId+'/'+msg.id,msg);
+    notifyInstalledBots(state.currentChannelId,msg);
   }
   if(!state.messages[state.currentChannelId])state.messages[state.currentChannelId]=[];
   if(!state.messages[state.currentChannelId].find(m=>m.id===msg.id))state.messages[state.currentChannelId].push(msg);
@@ -6877,6 +6893,46 @@ function isServerAdmin(srv){
 // Bots are created and configured in Communiter Studio; from here any admin of the
 // server can install or remove them without having to enter Studio.
 const BOT_CHANNEL_MAP={welcome:'welcomeChannels',dex:'dexChannels',search:'searchChannels','plugin-mine':'channels','plugin-fight':'channels','custom-code':'customChannels'};
+
+// ====== Conexión con el Bot Runner (Cloudflare Worker) ======
+// Reemplaza estos dos valores después de desplegar worker.js:
+// - BOT_WORKER_URL: la URL que te da Cloudflare al hacer Deploy (https://xxx.workers.dev)
+// - BOT_WORKER_SECRET: el mismo valor que pusiste con `wrangler secret put WORKER_SECRET`
+const BOT_WORKER_URL='https://communiter-bots.fernandoavilaarana.workers.dev';
+const BOT_WORKER_SECRET='a8f3k9m2p7q1w5r6t4y0z3x8';
+
+let _botsCacheForWorker=null;
+let _botsCacheForWorkerSubscribed=false;
+function ensureBotsCacheForWorkerSubscribed(){
+  if(_botsCacheForWorkerSubscribed)return;
+  if(!window._fbOnValue||!window._fbRef||!window._db)return; // Firebase (module script) aún no cargó
+  _botsCacheForWorkerSubscribed=true;
+  window._fbOnValue(fbRef('botdata/bots'),snap=>{
+    _botsCacheForWorker=snap.exists()?snap.val():{};
+  });
+}
+
+// Avisa al Worker cuando un mensaje nuevo cae en un canal donde hay un bot
+// instalado y configurado para ese canal. El Worker decide si le toca
+// responder (según el runtimeCode del bot) — aquí solo se dispara el aviso.
+function notifyInstalledBots(channelId,msg){
+  if(!BOT_WORKER_URL||BOT_WORKER_URL.includes('TU-WORKER'))return; // Worker aún no configurado
+  ensureBotsCacheForWorkerSubscribed();
+  if(!_botsCacheForWorker||!state.currentServerId)return;
+  const srvId=state.currentServerId;
+  Object.values(_botsCacheForWorker).forEach(bot=>{
+    if(!bot||!bot.uid||!bot.runtimeCode)return;
+    if(!(bot.installedServers||[]).includes(srvId))return;
+    const channelKey=BOT_CHANNEL_MAP[bot.type]||'customChannels';
+    const mappedChannel=(bot[channelKey]||{})[srvId];
+    if(!mappedChannel||mappedChannel!==channelId)return; // este bot no escucha este canal
+    fetch(BOT_WORKER_URL,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-worker-secret':BOT_WORKER_SECRET},
+      body:JSON.stringify({botId:bot.uid,channelId,msg})
+    }).catch(e=>console.warn('[bot worker] notify failed',e));
+  });
+}
 let _botsMarketUnsub=null;
 function getAllTextChannelsOf(srv){
   return (srv.channels||[]).flatMap(c=>c.children||[]).filter(c=>c.type==='text'||!c.type);
