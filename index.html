@@ -4139,14 +4139,28 @@ const PRUNE_CHECK_THROTTLE_MS=5*60*1000; // at most once every 5 minutes per cha
 // fire it at almost the same time, nothing bad happens — deleting an already-deleted message is a
 // no-op in Firebase).
 const CHANNEL_MSG_CAP=150;
-function isThreadChannel(channelId){
+// Finds a channel OR thread anywhere across all servers, by id. Shared by
+// isThreadChannel/isProtectedChannel below so the "does this search inside
+// .threads[] too" fix lives in exactly one place — this exact bug (only
+// checking cat.children, never checking a parent's nested .threads[]) turned
+// up independently in four different functions (getChannel, getChannelById,
+// isThreadChannel, isProtectedChannel), so centralizing it here instead of
+// re-writing four separate loops.
+function findChannelOrThreadAnywhere(channelId){
   for(const srv of state.servers||[]){
     for(const cat of srv.channels||[]){
-      const ch=(cat.children||[]).find(c=>c.id===channelId);
-      if(ch)return ch.type==='thread';
+      for(const ch of cat.children||[]){
+        if(ch.id===channelId)return{ch,srv};
+        const thread=(ch.threads||[]).find(th=>th.id===channelId);
+        if(thread)return{ch:thread,srv};
+      }
     }
   }
-  return false;
+  return null;
+}
+function isThreadChannel(channelId){
+  const found=findChannelOrThreadAnywhere(channelId);
+  return found?found.ch.type==='thread':false;
 }
 // ── AUTOMATIC MESSAGE CLEANUP ──
 // Keeps at most CHANNEL_MSG_CAP messages per channel. Once exceeded,
@@ -4168,25 +4182,20 @@ function cleanupChannelMessages(channelId){
   checkAndPruneChannel(channelId,'state/messages/');
 }
 function isProtectedChannel(channelId){
-  for(const srv of state.servers||[]){
-    for(const cat of srv.channels||[]){
-      const ch=(cat.children||[]).find(c=>c.id===channelId);
-      if(ch){
-        // forceProtected: escape manual, se pone directo en Firebase
-        // (state/servers/{srv}/channels/{cat}/children/{ch}/forceProtected = true).
-        // Doesn't depend on having Server Boost or being the owner within the app —
-        // meant to protect a channel on someone else's server without asking anything of
-        // anyone, as a fallback while we confirm everything works well.
-        if(ch.forceProtected)return true;
-        // The real list of Boost-protected channels lives in Supabase, not in
-        // Firebase — so the per-tier cap (BOOST_TIERS[].protectedChannelCap)
-        // can actually be enforced, without piling up more booleans
-        // loose booleans on every channel of every server.
-        return isChannelProtectedSupabase(srv.id,channelId);
-      }
-    }
-  }
-  return false;
+  const found=findChannelOrThreadAnywhere(channelId);
+  if(!found)return false;
+  const{ch,srv}=found;
+  // forceProtected: escape manual, se pone directo en Firebase
+  // (state/servers/{srv}/channels/{cat}/children/{ch}/forceProtected = true).
+  // Doesn't depend on having Server Boost or being the owner within the app —
+  // meant to protect a channel on someone else's server without asking anything of
+  // anyone, as a fallback while we confirm everything works well.
+  if(ch.forceProtected)return true;
+  // The real list of Boost-protected channels lives in Supabase, not in
+  // Firebase — so the per-tier cap (BOOST_TIERS[].protectedChannelCap)
+  // can actually be enforced, without piling up more booleans
+  // loose booleans on every channel of every server.
+  return isChannelProtectedSupabase(srv.id,channelId);
 }
 // Before, cleanup only ran if the user did NOT have Lite Mode enabled, and
 // needed the COMPLETE list of already-loaded messages just to count
@@ -4664,17 +4673,7 @@ function renderChannelsPanel(){
   Object.keys(_chVoiceListeners).forEach(chId=>{fbOff('calls/'+chId+'/participants',_chVoiceListeners[chId]);delete _chVoiceListeners[chId];});
   const srv=getServer(state.currentServerId);
   const isDM=state.currentServerId==='__dm__';
-  // Discord shows a small round CHECKMARK badge next to a verified/official
-  // server's icon, with a two-line hover tooltip (bold "[Name] Official" +
-  // a subtitle below). Recreated as an inline SVG (no image asset) — driven
-  // by a dedicated srv.verified flag set in Server Settings, not by
-  // serverType, since "official/verified" is its own concept separate from
-  // just being publicly joinable. Native title="" can't do bold/two-line
-  // text, so this uses a small custom tooltip (data-tooltip + CSS) instead.
-  const communityBadge=(!isDM&&srv&&srv.verified)
-    ?` <span class="verified-badge" data-tt-title="${escapeHtml(srv.verifiedLabel||srv.name+' Official')}" data-tt-sub="${escapeHtml(srv.desc||'')}" style="display:inline-flex;vertical-align:-3px;width:16px;height:16px;border-radius:50%;background:#5865f2;align-items:center;justify-content:center;flex-shrink:0;position:relative;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>`
-    :'';
-  document.getElementById('server-name').innerHTML=isDM?'Direct Messages':escapeHtml(srv?.name||'')+communityBadge;
+  document.getElementById('server-name').textContent=isDM?'Direct Messages':(srv?.name||'');
   document.getElementById('add-channel-btn').style.display=(!isDM&&srv&&hasPermission(state.currentUser.uid,'manage_channels'))?'':'none';
   // The server banner used to only be visible on the invite/join card — once
   // you were actually IN a server there was nowhere it showed at all, even
@@ -5629,13 +5628,7 @@ function handleTyping(){
   typingTimeout=setTimeout(()=>{fbRemove('typing/'+state.currentUser.uid);_lastTypingWrite=0;},3000);
 }
 function getChannelById(chId){
-  for(const srv of state.servers){
-    for(const cat of (srv.channels||[])){
-      const ch=(cat.children||[]).find(c=>c.id===chId);
-      if(ch)return{ch,srv};
-    }
-  }
-  return null;
+  return findChannelOrThreadAnywhere(chId);
 }
 // Shared timeout + slow mode check before letting a message be sent
 // to a server channel (doesn't apply to DMs). Returns true if it can be sent.
@@ -6214,27 +6207,34 @@ function editCategory(catId){
     </div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:20px;">
       <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Cancelar</button>
-      <button class="btn btn-primary" onclick="(async function(){
-        const name=document.getElementById('_cat-name').value.trim();
-        if(!name)return;
-        const b64=document.getElementById('_cat-icon-prev').dataset.b64||'';
-        const srv=getServer(state.currentServerId);
-        const cat=srv.channels.find(c=>c.id==='${catId}');
-        if(!cat)return;
-        cat.name=name;
-        if(b64){
-          const url=await uploadToSupabaseStorage(b64,'category-icons');
-          if(url)cat.icon=url;
-          else{showToast(t("⚠️ Couldn't upload the image (check your Supabase Storage configuration)"));return;}
-        } else if(b64===''&&document.getElementById('_cat-icon-prev').innerHTML==='📁'){cat.icon='';}
-        saveServers();renderChannelsPanel();if(document.getElementById('ss-sec-channels')?.classList.contains('active'))renderSsChannels(srv);showToast(t("✅ Categoría actualizada"));
-        document.querySelector('[style*=fixed][style*=backdrop]').remove();
-      })()">Guardar</button>
+      <button class="btn btn-primary" id="_cat-save-btn">Guardar</button>
     </div>
   </div>`;
   overlay.onclick=e=>{if(e.target===overlay)overlay.remove();};
   document.body.appendChild(overlay);
   document.getElementById('_cat-name').focus();
+  // Bound here (closure over `overlay`) instead of an inline onclick with a
+  // generic document.querySelector('[style*=fixed][style*=backdrop]') — that
+  // selector matched the FIRST such element anywhere in the whole page, not
+  // necessarily THIS dialog, so Guardar could fail to close this modal (or
+  // remove some unrelated element instead) even though the save itself went
+  // through fine. Looked exactly like "editing doesn't work."
+  document.getElementById('_cat-save-btn').onclick=async()=>{
+    const name=document.getElementById('_cat-name').value.trim();
+    if(!name)return;
+    const b64=document.getElementById('_cat-icon-prev').dataset.b64||'';
+    const srv2=getServer(state.currentServerId);
+    const cat2=srv2.channels.find(c=>c.id===catId);
+    if(!cat2)return;
+    cat2.name=name;
+    if(b64){
+      const url=await uploadToSupabaseStorage(b64,'category-icons');
+      if(url)cat2.icon=url;
+      else{showToast(t("⚠️ Couldn't upload the image (check your Supabase Storage configuration)"));return;}
+    } else if(b64===''&&document.getElementById('_cat-icon-prev').innerHTML==='📁'){cat2.icon='';}
+    saveServers();renderChannelsPanel();if(document.getElementById('ss-sec-channels')?.classList.contains('active'))renderSsChannels(srv2);showToast(t("✅ Categoría actualizada"));
+    overlay.remove();
+  };
 }
 
 // ── EDIT CHANNEL ──
@@ -7640,37 +7640,38 @@ function editCustomEmoji(idx){
     </select>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:20px;">
       <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Cancelar</button>
-      <button class="btn btn-primary" onclick="saveEditedEmoji(${idx})">Guardar</button>
+      <button class="btn btn-primary" id="_emo-save-btn">Guardar</button>
     </div>
   </div>`;
   overlay.onclick=ev=>{if(ev.target===overlay)overlay.remove();};
   document.body.appendChild(overlay);
   document.getElementById('_emo-name').focus();
   const restrictSel=document.getElementById('_emo-restrict');if(restrictSel)restrictSel.value=curVal;
-}
-async function saveEditedEmoji(idx){
-  const srv=getServer(state.currentServerId);if(!srv)return;
-  const e=srv.customEmojis[idx];if(!e)return;
-  const name=document.getElementById('_emo-name').value.trim().toLowerCase().replace(/\s+/g,'_');
-  if(!name){showToast(t("⚠️ Nombre requerido"));return;}
-  const newB64=document.getElementById('_emo-prev').dataset.b64;
-  // newB64 is only set when the person picked a NEW image file in this edit
-  // dialog (compressImagePNG puts it there) — upload it to Supabase Storage
-  // just like a brand-new emoji, instead of writing the raw base64 straight
-  // into state/servers (which every connected user downloads on every load).
-  if(newB64){
-    showToast(t("⏳ Subiendo emoji..."));
-    const url=await uploadToSupabaseStorage(newB64,'emojis');
-    if(!url){showToast(t("⚠️ Couldn't upload the emoji (check your Supabase Storage configuration)"));return;}
-    e.url=url;
-  }
-  e.name=name;
-  const restrictVal=document.getElementById('_emo-restrict')?.value||'';
-  if(restrictVal){const [type,id]=restrictVal.split(':');e.restrict={type,id};}
-  else{e.restrict=null;}
-  saveServers();renderCustomEmojiList(srv);
-  document.querySelector('[style*=fixed][style*=backdrop]')?.remove();
-  showToast(t("✅ Emoji actualizado"));
+  // Bound here (closure over `overlay`) instead of a separate global
+  // function + document.querySelector('[style*=fixed][style*=backdrop]') —
+  // that selector matched the FIRST such element anywhere on the page, not
+  // necessarily THIS dialog, so saving could silently fail to close this
+  // modal (or remove something unrelated) even though the actual save went through.
+  document.getElementById('_emo-save-btn').onclick=async()=>{
+    const srv2=getServer(state.currentServerId);if(!srv2)return;
+    const e2=srv2.customEmojis[idx];if(!e2)return;
+    const name=document.getElementById('_emo-name').value.trim().toLowerCase().replace(/\s+/g,'_');
+    if(!name){showToast(t("⚠️ Nombre requerido"));return;}
+    const newB64=document.getElementById('_emo-prev').dataset.b64;
+    if(newB64){
+      showToast(t("⏳ Subiendo emoji..."));
+      const url=await uploadToSupabaseStorage(newB64,'emojis');
+      if(!url){showToast(t("⚠️ Couldn't upload the emoji (check your Supabase Storage configuration)"));return;}
+      e2.url=url;
+    }
+    e2.name=name;
+    const restrictVal2=document.getElementById('_emo-restrict')?.value||'';
+    if(restrictVal2){const [type,id]=restrictVal2.split(':');e2.restrict={type,id};}
+    else{e2.restrict=null;}
+    saveServers();renderCustomEmojiList(srv2);
+    overlay.remove();
+    showToast(t("✅ Emoji actualizado"));
+  };
 }
 
 // ── CUSTOM STICKERS (server) ──
@@ -10722,7 +10723,17 @@ function getAutoAvatarColor(seed){
   return AUTO_AVATAR_PALETTE[hash%AUTO_AVATAR_PALETTE.length];
 }
 function getServer(id){return state.servers.find(s=>s.id===id);}
-function getChannel(id,srv){if(!id||!srv)return null;for(const cat of(srv.channels||[])){const ch=(cat.children||[]).find(c=>c.id===id);if(ch)return ch;}return null;}
+function getChannel(id,srv){
+  if(!id||!srv)return null;
+  for(const cat of(srv.channels||[])){
+    for(const ch of(cat.children||[])){
+      if(ch.id===id)return ch;
+      const thread=(ch.threads||[]).find(th=>th.id===id);
+      if(thread)return thread;
+    }
+  }
+  return null;
+}
 function genId(n=10){return Math.random().toString(36).substring(2,2+n);}
 function fmtTime(ts){
   return new Date(ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
@@ -11224,22 +11235,27 @@ function addServerGoal(srvId) {
     </div>
     <div style="display:flex;gap:8px;justify-content:flex-end;">
       <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Cancelar</button>
-      <button class="btn btn-primary" onclick="(function(){
-        const title=document.getElementById('_goal-title').value.trim();
-        const cur=parseInt(document.getElementById('_goal-cur').value)||0;
-        const target=parseInt(document.getElementById('_goal-target').value)||100;
-        if(!title)return;
-        const srv=getServer('${srvId}');if(!srv)return;
-        srv.novaGoals=srv.novaGoals||[];
-        srv.novaGoals.push({title,current:cur,target});
-        saveServers();
-        document.querySelector('[style*=fixed]').remove();
-        openSsSection('nova',document.querySelector('.ss-nav-item[data-section=nova]'));
-        showToast(t("✅ Objetivo añadido"));
-      })()">Guardar</button>
+      <button class="btn btn-primary" id="_goal-save-btn">Guardar</button>
     </div>
   </div>`;
   document.body.appendChild(overlay);
+  // Bound via closure over `overlay` — a bare document.querySelector('[style*=fixed]')
+  // here would match the FIRST fixed-position element anywhere on the page
+  // (there can easily be several at once: toasts, other modals), not
+  // necessarily this one, so Guardar could fail to close this dialog.
+  document.getElementById('_goal-save-btn').onclick=()=>{
+    const title=document.getElementById('_goal-title').value.trim();
+    const cur=parseInt(document.getElementById('_goal-cur').value)||0;
+    const target=parseInt(document.getElementById('_goal-target').value)||100;
+    if(!title)return;
+    const srv2=getServer(srvId);if(!srv2)return;
+    srv2.novaGoals=srv2.novaGoals||[];
+    srv2.novaGoals.push({title,current:cur,target});
+    saveServers();
+    overlay.remove();
+    openSsSection('nova',document.querySelector('.ss-nav-item[data-section=nova]'));
+    showToast(t("✅ Objetivo añadido"));
+  };
   setTimeout(() => document.getElementById('_goal-title')?.focus(), 50);
 }
 async function editServerGoalProgress(srvId, idx) {
@@ -11283,21 +11299,22 @@ function addQuickReply(srvId) {
     <textarea id="_qr-text" rows="3" placeholder="Texto del mensaje..." data-i18n-placeholder="Texto del mensaje..." style="width:100%;background:var(--bg-3);border:1.5px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text-0);font-family:var(--font);font-size:.875rem;outline:none;resize:none;box-sizing:border-box;"></textarea>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
       <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Cancelar</button>
-      <button class="btn btn-primary" onclick="(function(){
-        const label=document.getElementById('_qr-label').value.trim();
-        const text=document.getElementById('_qr-text').value.trim();
-        if(!label||!text)return;
-        const srv=getServer('${srvId}');if(!srv)return;
-        srv.novaQuickReplies=srv.novaQuickReplies||[];
-        srv.novaQuickReplies.push({label,text});
-        saveServers();
-        document.querySelector('[style*=fixed]').remove();
-        openSsSection('nova',document.querySelector('.ss-nav-item[data-section=nova]'));
-        showToast(t("✅ Plantilla guardada"));
-      })()">Guardar</button>
+      <button class="btn btn-primary" id="_qr-save-btn">Guardar</button>
     </div>
   </div>`;
   document.body.appendChild(overlay);
+  document.getElementById('_qr-save-btn').onclick=()=>{
+    const label=document.getElementById('_qr-label').value.trim();
+    const text=document.getElementById('_qr-text').value.trim();
+    if(!label||!text)return;
+    const srv2=getServer(srvId);if(!srv2)return;
+    srv2.novaQuickReplies=srv2.novaQuickReplies||[];
+    srv2.novaQuickReplies.push({label,text});
+    saveServers();
+    overlay.remove();
+    openSsSection('nova',document.querySelector('.ss-nav-item[data-section=nova]'));
+    showToast(t("✅ Plantilla guardada"));
+  };
   setTimeout(() => document.getElementById('_qr-label')?.focus(), 50);
 }
 function useQuickReply(idx, srvId) {
