@@ -5569,7 +5569,7 @@ function buildMemberEl(m,isOnline){
   const nameFont=(live&&live.nameFont!==undefined)?live.nameFont:m.nameFont;
   const nameStyle=`color:${isOnline?(roleColor||'var(--text-1)'):'var(--text-3)'};${nameFont?`font-family:${nameFont};`:''}`;
   div.innerHTML=`<div class="member-avatar-wrap"><div class="member-avatar" style="background:${bg};${avatarRingStyle}">${avatarC}</div>${decoImgHtml}<div class="member-status" style="background:${statusColor}"></div></div><div class="member-info"><div class="member-name" style="${nameStyle}">${m.nickname?escapeHtml(m.nickname):((live&&live.name)||m.name||'?')}${uid===state.currentUser.uid?` <span style="font-size:.65rem;color:var(--accent);">(${currentLang==='en'?'you':'tú'})</span>`:''}${botBadgeHtml}${plusBadgeHtml}${storeBadgeHtml}</div>${activityHtml}</div>`;
-  div.onclick=e=>{ isBot?showBotProfilePopup(e,m):showProfilePopupByUid(e,uid,m); e.stopPropagation(); };
+  div.onclick=e=>{ isBot?showProfilePopup(e,uid):showProfilePopupByUid(e,uid,m); e.stopPropagation(); };
   return div;
 }
 function renderFriendsActivityPanel(el){
@@ -8052,12 +8052,11 @@ function handleInviteLinkOnLoad(){
 function showProfilePopup(event,uid){
   if(!uid||uid==='system')return;
   if(uid.startsWith('bot_')){
-    // Installed bots are NEVER added to srv.members (installBotToServer only
-    // updates botdata/bots/{botId}), so looking for them there always failed and the
-    // popup wouldn't open. The real source of truth for a bot is botdata/bots/{uid}.
-    const srv=getServer(state.currentServerId);
-    const cached=(srv?.members||[]).find(m=>(m.uid||m.id)===uid)||state.onlineUsers[uid];
-    if(cached){showBotProfilePopup(event,cached);return;}
+    // Siempre se trae el registro completo desde botdata/bots/{uid} — el
+    // objeto "miembro" cacheado en srv.members (usado para pintar la lista
+    // rápido) solo trae uid/name/avatarUrl/avatarColor/isBot/roles, NUNCA
+    // description, así que usarlo directo aquí mostraba siempre el texto
+    // genérico aunque el bot sí tuviera una descripción real guardada.
     fbGet('botdata/bots/'+uid).then(snap=>{
       const bot=snap&&snap.exists&&snap.exists()?snap.val():null;
       if(bot)showBotProfilePopup(event,{...bot,uid});
@@ -8094,7 +8093,7 @@ function showBotProfilePopup(event,botInfo){
         <span style="font-size:1rem;font-weight:700;color:var(--text-0);">${botInfo.name||'Bot'}</span>
         <span style="background:var(--accent);color:#fff;font-size:.55rem;font-weight:700;border-radius:4px;padding:1px 5px;">BOT</span>
       </div>
-      <div style="margin-top:4px;font-size:.78rem;color:var(--text-2);line-height:1.4;">${botInfo.botDescription||'Bot de Communiter.'}</div>
+      <div style="margin-top:4px;font-size:.78rem;color:var(--text-2);line-height:1.4;">${botInfo.description||'Bot de Communiter.'}</div>
       ${commandsHtml?`<div style="margin-top:10px;font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--text-3);letter-spacing:.05em;margin-bottom:6px;">Comandos</div>${commandsHtml}`:''}
     </div>`;
   popup.classList.add('open');
