@@ -6905,11 +6905,22 @@ let _botsCacheForWorker=null;
 let _botsCacheForWorkerSubscribed=false;
 function ensureBotsCacheForWorkerSubscribed(){
   if(_botsCacheForWorkerSubscribed)return;
-  if(!window._fbOnValue||!window._fbRef||!window._db)return; // Firebase (module script) aún no cargó
+  if(!window._fbOnValue||!window._fbRef||!window._db){
+    console.warn('[bot worker] Firebase aún no está listo, reintentará en el próximo mensaje');
+    return;
+  }
   _botsCacheForWorkerSubscribed=true;
-  window._fbOnValue(fbRef('botdata/bots'),snap=>{
-    _botsCacheForWorker=snap.exists()?snap.val():{};
-  });
+  window._fbOnValue(
+    fbRef('botdata/bots'),
+    snap=>{
+      _botsCacheForWorker=snap.exists()?snap.val():{};
+      console.log('[bot worker] botdata/bots cargado:',Object.keys(_botsCacheForWorker).length,'bot(s)');
+    },
+    err=>{
+      console.error('[bot worker] NO SE PUDO LEER botdata/bots (revisa las reglas de seguridad / auth):',err);
+      _botsCacheForWorkerSubscribed=false; // permite reintentar en el próximo mensaje
+    }
+  );
 }
 
 // Avisa al Worker cuando un mensaje nuevo cae en un canal donde hay un bot
@@ -6918,19 +6929,24 @@ function ensureBotsCacheForWorkerSubscribed(){
 function notifyInstalledBots(channelId,msg){
   if(!BOT_WORKER_URL||BOT_WORKER_URL.includes('TU-WORKER'))return; // Worker aún no configurado
   ensureBotsCacheForWorkerSubscribed();
-  if(!_botsCacheForWorker||!state.currentServerId)return;
+  if(!_botsCacheForWorker){console.log('[bot worker] cache de bots todavía no cargó, se salta este mensaje');return;}
+  if(!state.currentServerId){console.log('[bot worker] no hay currentServerId');return;}
   const srvId=state.currentServerId;
-  Object.values(_botsCacheForWorker).forEach(bot=>{
-    if(!bot||!bot.uid||!bot.runtimeCode)return;
-    if(!(bot.installedServers||[]).includes(srvId))return;
+  const allBots=Object.values(_botsCacheForWorker);
+  console.log('[bot worker] revisando',allBots.length,'bot(s) para servidor',srvId,'canal',channelId);
+  allBots.forEach(bot=>{
+    if(!bot||!bot.uid||!bot.runtimeCode){console.log('[bot worker] bot inválido/sin runtimeCode, se salta:',bot&&bot.name);return;}
+    if(!(bot.installedServers||[]).includes(srvId)){console.log('[bot worker]',bot.name,'no está instalado en este servidor');return;}
     const channelKey=BOT_CHANNEL_MAP[bot.type]||'customChannels';
     const mappedChannel=(bot[channelKey]||{})[srvId];
-    if(!mappedChannel||mappedChannel!==channelId)return; // este bot no escucha este canal
+    if(!mappedChannel||mappedChannel!==channelId){console.log('[bot worker]',bot.name,'canal configurado:',mappedChannel,'vs canal actual:',channelId);return;}
+    console.log('[bot worker] disparando notificación a',bot.name);
     fetch(BOT_WORKER_URL,{
       method:'POST',
       headers:{'Content-Type':'application/json','x-worker-secret':BOT_WORKER_SECRET},
       body:JSON.stringify({botId:bot.uid,channelId,msg})
-    }).catch(e=>console.warn('[bot worker] notify failed',e));
+    }).then(r=>r.text()).then(t=>console.log('[bot worker] respuesta:',t))
+      .catch(e=>console.warn('[bot worker] notify failed',e));
   });
 }
 let _botsMarketUnsub=null;
