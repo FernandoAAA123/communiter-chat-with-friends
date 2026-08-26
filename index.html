@@ -8100,7 +8100,7 @@ function showBotProfilePopup(event,botInfo){
   `).join('');
 
   popup.innerHTML=`
-    <div style="height:56px;background:linear-gradient(135deg,${color},${color}88);"></div>
+    <div style="height:56px;background:${botInfo.bannerUrl?`url('${botInfo.bannerUrl}') center/cover no-repeat`:`linear-gradient(135deg,${color},${color}88)`};"></div>
     <div style="padding:0 14px 14px;">
       <div style="width:64px;height:64px;border-radius:50%;border:4px solid var(--bg-1);margin-top:-32px;overflow:hidden;background:${color};display:flex;align-items:center;justify-content:center;font-size:1.6rem;font-weight:700;color:#fff;">
         ${avatarHtml}
