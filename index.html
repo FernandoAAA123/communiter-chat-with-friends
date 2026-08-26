@@ -5495,10 +5495,13 @@ function renderMembersPanel(){
   const offlineBots=botMembers.filter(m=>!onlineIds.has(m.uid||m.id));
   // Roles marked as "hoist" are shown as their own category among ONLINE members,
   // in the order they're defined in srv.roles (from highest to lowest hierarchy).
+  // Within each category, members are alphabetical by name (like Discord) — not
+  // by join order, which is how srv.members happens to be ordered.
+  const byName=(a,b)=>(a.name||'').localeCompare(b.name||'',undefined,{sensitivity:'base'});
   const hoistedRoles=(srv.roles||[]).filter(r=>r.hoist);
   const assigned=new Set();
   hoistedRoles.forEach(role=>{
-    const inRole=online.filter(m=>!assigned.has(m.uid||m.id)&&(m.roles||[]).includes(role.name));
+    const inRole=online.filter(m=>!assigned.has(m.uid||m.id)&&(m.roles||[]).includes(role.name)).sort(byName);
     inRole.forEach(m=>assigned.add(m.uid||m.id));
     if(inRole.length){
       const c=document.createElement('div');c.className='members-category';
@@ -5508,19 +5511,22 @@ function renderMembersPanel(){
     }
   });
   // Online members with no hoisted role + active bots
-  const plainOnline=online.filter(m=>!assigned.has(m.uid||m.id));
-  const totalOnline=[...plainOnline,...onlineBots];
+  const plainOnline=online.filter(m=>!assigned.has(m.uid||m.id)).sort(byName);
+  const sortedOnlineBots=[...onlineBots].sort(byName);
+  const totalOnline=[...plainOnline,...sortedOnlineBots];
   if(totalOnline.length){
     const c=document.createElement('div');c.className='members-category';c.textContent=`ONLINE — ${totalOnline.length}`;el.appendChild(c);
     plainOnline.forEach(m=>el.appendChild(buildMemberEl(m,true)));
-    onlineBots.forEach(m=>el.appendChild(buildMemberEl(m,true)));
+    sortedOnlineBots.forEach(m=>el.appendChild(buildMemberEl(m,true)));
   }
   // OFFLINE: offline users + inactive bots together (not split by role, like in Discord)
-  const totalOffline=[...offline,...offlineBots];
+  const sortedOffline=[...offline].sort(byName);
+  const sortedOfflineBots=[...offlineBots].sort(byName);
+  const totalOffline=[...sortedOffline,...sortedOfflineBots];
   if(totalOffline.length){
     const c=document.createElement('div');c.className='members-category';c.textContent=`OFFLINE — ${totalOffline.length}`;el.appendChild(c);
-    offline.forEach(m=>el.appendChild(buildMemberEl(m,false)));
-    offlineBots.forEach(m=>el.appendChild(buildMemberEl(m,false)));
+    sortedOffline.forEach(m=>el.appendChild(buildMemberEl(m,false)));
+    sortedOfflineBots.forEach(m=>el.appendChild(buildMemberEl(m,false)));
   }
 }
 function buildMemberEl(m,isOnline){
@@ -6894,6 +6900,15 @@ function isServerAdmin(srv){
 // server can install or remove them without having to enter Studio.
 const BOT_CHANNEL_MAP={welcome:'welcomeChannels',dex:'dexChannels',search:'searchChannels','plugin-mine':'channels','plugin-fight':'channels','custom-code':'customChannels'};
 
+// Un bot puede estar activo en varios canales del mismo servidor. El dato
+// guardado por servidor puede ser un array (nuevo) o, por compatibilidad con
+// bots instalados antes de este cambio, un string de un solo canal.
+function channelsForBotInServer(bot,srvId,channelKey){
+  const raw=(bot[channelKey]||{})[srvId];
+  if(Array.isArray(raw))return raw;
+  return raw?[raw]:[];
+}
+
 // ====== Conexión con el Bot Runner (Cloudflare Worker) ======
 // Reemplaza estos dos valores después de desplegar worker.js:
 // - BOT_WORKER_URL: la URL que te da Cloudflare al hacer Deploy (https://xxx.workers.dev)
@@ -6938,8 +6953,8 @@ function notifyInstalledBots(channelId,msg){
     if(!bot||!bot.uid||!bot.runtimeCode){console.log('[bot worker] bot inválido/sin runtimeCode, se salta:',bot&&bot.name);return;}
     if(!(bot.installedServers||[]).includes(srvId)){console.log('[bot worker]',bot.name,'no está instalado en este servidor');return;}
     const channelKey=BOT_CHANNEL_MAP[bot.type]||'customChannels';
-    const mappedChannel=(bot[channelKey]||{})[srvId];
-    if(!mappedChannel||mappedChannel!==channelId){console.log('[bot worker]',bot.name,'canal configurado:',mappedChannel,'vs canal actual:',channelId);return;}
+    const channelsForBot=channelsForBotInServer(bot,srvId,channelKey);
+    if(!channelsForBot.includes(channelId)){console.log('[bot worker]',bot.name,'canal(es) configurado(s):',channelsForBot,'vs canal actual:',channelId);return;}
     console.log('[bot worker] disparando notificación a',bot.name);
     fetch(BOT_WORKER_URL,{
       method:'POST',
@@ -6992,21 +7007,25 @@ function openInstallBotFlow(botId){
     }
     const channels=getAllTextChannelsOf(srv);
     if(!channels.length){showToast(t("⚠️ Este servidor no tiene canales de texto"));return;}
-    const options=channels.map(c=>`<option value="${c.id}">#${c.name}</option>`).join('');
+    const existing=channelsForBotInServer(bot,srv.id,channelKey);
+    const checkboxes=channels.map(c=>`<label style="display:flex;align-items:center;gap:8px;font-size:.85rem;cursor:pointer;padding:4px 0;">
+      <input type="checkbox" class="bot-install-ch" value="${c.id}"${existing.includes(c.id)||(!existing.length&&c.id===channels[0].id)?' checked':''}> #${c.name}
+    </label>`).join('');
     const html=`<div class="modal-overlay open" id="bot-install-modal" style="z-index:9999;"><div class="modal" style="width:380px;">
       <button class="close-btn" onclick="document.getElementById('bot-install-modal').remove()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       <h2>Añadir ${bot.name}</h2>
-      <p class="sub">Elige en qué canal responderá este bot en "${srv.name}".</p>
-      <label>Canal</label><select id="bot-install-channel">${options}</select>
+      <p class="sub">Elige en qué canal(es) responderá este bot en "${srv.name}".</p>
+      <label>Canales</label>
+      <div style="display:flex;flex-direction:column;gap:2px;max-height:200px;overflow-y:auto;background:var(--bg-3);border:1.5px solid var(--border);border-radius:8px;padding:8px 10px;margin-top:6px;">${checkboxes}</div>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="document.getElementById('bot-install-modal').remove()">Cancelar</button>
-        <button class="btn btn-primary" onclick="installBotToServer('${botId}',document.getElementById('bot-install-channel').value);document.getElementById('bot-install-modal').remove();">Añadir bot</button>
+        <button class="btn btn-primary" onclick="installBotToServer('${botId}',Array.from(document.querySelectorAll('.bot-install-ch:checked')).map(i=>i.value));document.getElementById('bot-install-modal').remove();">Añadir bot</button>
       </div>
     </div></div>`;
     document.body.insertAdjacentHTML('beforeend',html);
   });
 }
-async function installBotToServer(botId,channelId){
+async function installBotToServer(botId,channelIds){
   const srv=getServer(state.currentServerId);if(!srv)return;
   if(!hasPermission(state.currentUser.uid,'manage_server')){showToast(t("⚠️ No tienes permiso para añadir bots a este servidor"));return;}
   const snap=await fbGet('botdata/bots/'+botId);
@@ -7014,8 +7033,8 @@ async function installBotToServer(botId,channelId){
   const installedServers=Array.from(new Set([...(bot.installedServers||[]),srv.id]));
   const updates={installedServers};
   const channelKey=BOT_CHANNEL_MAP[bot.type];
-  if(channelKey&&channelId){
-    updates[channelKey]={...(bot[channelKey]||{}),[srv.id]:channelId};
+  if(channelKey&&channelIds&&(Array.isArray(channelIds)?channelIds.length:true)){
+    updates[channelKey]={...(bot[channelKey]||{}),[srv.id]:Array.isArray(channelIds)?channelIds:[channelIds]};
   }
   // Before, if Firebase rejected this save (e.g. due to
   // bot node security) the error was left unshown — it looked like
