@@ -4244,7 +4244,7 @@ async function checkAndPruneChannel(channelId,dbPathPrefix){
     // 1) Are there more than CHANNEL_MSG_CAP messages? limitToLast(CAP+1) is enough
     // to know without fetching the whole history: if CAP+1 results come back,
     // it's because there are AT LEAST that many.
-    const checkSnap=await fbGet(window._fbQuery(baseRef,window._fbOrderByChild('ts'),window._fbLimitToLast(CHANNEL_MSG_CAP+1)));
+    const checkSnap=await window._fbGet(window._fbQuery(baseRef,window._fbOrderByChild('ts'),window._fbLimitToLast(CHANNEL_MSG_CAP+1)));
     if(!checkSnap||!checkSnap.exists())return;
     const checkList=Object.values(checkSnap.val());
     if(checkList.length<=CHANNEL_MSG_CAP)return; // no need to prune
@@ -4256,7 +4256,7 @@ async function checkAndPruneChannel(channelId,dbPathPrefix){
     // Bumped from 50 to 150: a channel that had been silently accumulating
     // thousands of unpruned messages (from before these fixes existed) could
     // take dozens of visits to fully catch up at the old batch size.
-    const oldSnap=await fbGet(window._fbQuery(baseRef,window._fbOrderByChild('ts'),window._fbLimitToFirst(150)));
+    const oldSnap=await window._fbGet(window._fbQuery(baseRef,window._fbOrderByChild('ts'),window._fbLimitToFirst(150)));
     if(!oldSnap||!oldSnap.exists())return;
     const oldList=Object.values(oldSnap.val());
     const deletable=oldList.filter(m=>!m.pinned);
