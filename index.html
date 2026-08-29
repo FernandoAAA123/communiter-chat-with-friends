@@ -4072,6 +4072,11 @@ function subscribeServers(){
         const val=snap.val();
         const wasArray=Array.isArray(val);
         state.servers=normalizeServers(wasArray?val:Object.values(val||{}));
+        // Sincroniza el snapshot de comparación de saveServers() con lo que
+        // acaba de llegar de Firebase, para que la próxima vez que algo
+        // llame a saveServers() solo suba lo que de verdad cambió desde acá
+        // — no todo, como si nada se hubiera cargado todavía.
+        _lastSavedServersJson=Object.fromEntries(state.servers.filter(s=>s&&s.id).map(s=>[s.id,JSON.stringify(s)]));
         // Self-healing one-time migration: if the data we just read still came
         // in the OLD array format (Firebase keys "0","1","2"...), rewrite the
         // whole node once in the new id-keyed format. From then on, saveServers()
@@ -4287,10 +4292,12 @@ function subscribeChannel(channelId){
   let isFirst=true;
   checkAndPruneChannel(channelId,'state/messages/');
   const baseRef=fbRef('state/messages/'+channelId);
-  // We request at most the last LITE_MODE_THRESHOLD (25) messages — we no longer
-  // filter by date (it used to cut off at the last 24h), we now show directly
-  // just the last 25 messages of the channel when Lite Mode is on.
-  const target=state.liteMode?window._fbQuery(baseRef,window._fbOrderByChild('ts'),window._fbLimitToLast(liteModeThreshold())):baseRef;
+  // Antes: sin Modo Lite, esto escuchaba baseRef a secas (sin límite) — el
+  // canal igual está capeado en CHANNEL_MSG_CAP por checkAndPruneChannel,
+  // pero la consulta no lo reflejaba, así que en una reconexión (o la carga
+  // inicial) Firebase no tenía forma de saber que alcanza con los últimos
+  // 150 y no necesitaba pedir explícitamente ese límite.
+  const target=window._fbQuery(baseRef,window._fbOrderByChild('ts'),window._fbLimitToLast(state.liteMode?liteModeThreshold():CHANNEL_MSG_CAP));
   window._fbOnValue(target,snap=>{
     const prev=state.messages[channelId]||[];
     if(!snap.exists()){state.messages[channelId]=[];}
@@ -4337,7 +4344,7 @@ function subscribeDMChannel(dmId){
   let isFirst=true;
   checkAndPruneChannel(dmId,'dmMessages/');
   const baseRef=fbRef('dmMessages/'+dmId);
-  const target=state.liteMode?window._fbQuery(baseRef,window._fbOrderByChild('ts'),window._fbLimitToLast(liteModeThreshold())):baseRef;
+  const target=window._fbQuery(baseRef,window._fbOrderByChild('ts'),window._fbLimitToLast(state.liteMode?liteModeThreshold():CHANNEL_MSG_CAP));
   window._fbOnValue(target,snap=>{
     const prev=state.messages[key]||[];
     if(!snap.exists()){state.messages[key]=[];if(state.currentChannelId===key)renderMessages();return;}
@@ -5323,6 +5330,7 @@ function mediaHtml(msg){
   if(msg.imageData)return`<br><img class="msg-img" src="${msg.imageData}" alt="img" loading="lazy" decoding="async" onclick="openImgViewer('${msg.id}')" style="cursor:zoom-in;">`;
   if(msg.imageUrl)return`<br><img class="msg-img" src="${msg.imageUrl}" alt="img" onclick="window.open('${msg.imageUrl}','_blank')" onerror="this.style.display='none'">`;
   if(msg.coverImg)return`<br><img class="msg-img" src="${msg.coverImg}" alt="img" onclick="openImgViewer('${msg.id}')" style="cursor:zoom-in;">`;
+  if(msg.videoUrl)return`<br><video controls preload="metadata" src="${msg.videoUrl}" style="max-width:360px;max-height:320px;border-radius:var(--r-sm);display:block;background:#000;"></video>`;
   if(msg.audioUrl)return`<br><audio controls src="${msg.audioUrl}" style="margin-top:6px;max-width:280px;border-radius:var(--r-sm);"></audio>`;
   if(msg.audioData)return`<br><audio controls src="${msg.audioData}" style="margin-top:6px;max-width:280px;border-radius:var(--r-sm);"></audio>`;
   if(msg.stickerUrl)return`<img src="${msg.stickerUrl}" alt="${msg.sticker||'sticker'}" style="width:140px;height:140px;object-fit:contain;margin-top:4px;display:block;">`;
@@ -5888,11 +5896,13 @@ function doReaction(msgId,emoji){
   const msg=(state.messages[ch]||[]).find(m=>m.id===msgId);if(!msg)return;
   if(!msg.reactions)msg.reactions=[];
   let r=msg.reactions.find(x=>x.emoji===emoji);
-  if(!r){msg.reactions.push({emoji,users:[state.currentUser.uid]});}
-  else{r.users=r.users||[];if(r.users.includes(state.currentUser.uid))r.users=r.users.filter(u=>u!==state.currentUser.uid);else r.users.push(state.currentUser.uid);if(!r.users.length)msg.reactions=msg.reactions.filter(x=>x.emoji!==emoji);}
+  let added;
+  if(!r){msg.reactions.push({emoji,users:[state.currentUser.uid]});added=true;}
+  else{r.users=r.users||[];if(r.users.includes(state.currentUser.uid)){r.users=r.users.filter(u=>u!==state.currentUser.uid);added=false;}else{r.users.push(state.currentUser.uid);added=true;}if(!r.users.length)msg.reactions=msg.reactions.filter(x=>x.emoji!==emoji);}
   const isDM=ch.startsWith('dm_');
   fbUpdate(isDM?'dmMessages/'+ch.replace('dm_','')+'/'+msgId:'state/messages/'+ch+'/'+msgId,{reactions:msg.reactions});
   renderMessages({force:true});
+  if(!isDM)notifyBotReaction(ch,msgId,emoji,state.currentUser.uid,added,msg.uid);
 }
 function sendSticker(e,n){
   if(state.reactTargetMsgId){state.reactTargetMsgId=null;closePicker();showToast(t("⚠️ Los stickers no se pueden usar como reacción"));return;}
@@ -6861,7 +6871,32 @@ function serversToFirebaseObject(servers){
   (servers||[]).forEach(srv=>{ if(srv&&srv.id) obj[srv.id]=srv; });
   return obj;
 }
-function saveServers(){fbSet('state/servers',serversToFirebaseObject(state.servers));}
+// ── Bandwidth: saveServers() solía reescribir TODOS los servidores enteros
+// en Firebase cada vez que se llamaba (69 lugares del código la llaman, para
+// cualquier cambio — un canal nuevo, un rol editado, alguien que se une...).
+// Como el listener de lectura (subscribeServers) también bajaba el nodo
+// completo en cada cambio, esto significaba que un solo edit en un servidor
+// grande podía hacer que TODOS los clientes conectados redescargaran TODOS
+// los servidores de la app entera. Ahora se compara contra el último
+// snapshot mandado y solo se sube (fbUpdate, multi-path) lo que realmente
+// cambió — sin tocar ninguno de los 69 call sites, que siguen llamando
+// saveServers() exactamente igual que antes.
+let _lastSavedServersJson={};
+function saveServers(){
+  const current=serversToFirebaseObject(state.servers);
+  const patch={};
+  let changed=false;
+  Object.keys(current).forEach(id=>{
+    const json=JSON.stringify(current[id]);
+    if(_lastSavedServersJson[id]!==json){patch[id]=current[id];changed=true;}
+  });
+  Object.keys(_lastSavedServersJson).forEach(id=>{
+    if(!(id in current)){patch[id]=null;changed=true;} // servidor eliminado
+  });
+  _lastSavedServersJson=Object.fromEntries(Object.keys(current).map(id=>[id,JSON.stringify(current[id])]));
+  if(!changed)return; // nada cambió de verdad, no gastar escritura/lectura de nadie
+  fbUpdate('state/servers',patch);
+}
 // ── SERVER CO-OWNERS ──
 // A server has an ownerId (the original owner, can't be removed) and
 // optionally a coOwnerId (a second person with the same powers
@@ -6989,6 +7024,26 @@ function notifyInstalledBots(channelId,msg){
 }
 
 // ── Panel de comandos tipo Discord (aparece al escribir "/") ──
+// Avisa al Worker cuando alguien pone o saca una reacción en un mensaje que
+// fue mandado POR UN BOT (nunca por otro humano) — usado para navegación por
+// reacciones (ej. IMDb con ⬅️➡️). El authorUid es el uid del mensaje
+// reaccionado; solo interesa si empieza con "bot_" (o "char_", por si algún
+// personaje de roleplay algún día usa reacciones también).
+function notifyBotReaction(channelId,msgId,emoji,uid,added,authorUid){
+  if(!BOT_WORKER_URL||BOT_WORKER_URL.includes('TU-WORKER'))return;
+  if(!authorUid||!(authorUid.startsWith('bot_')||authorUid.startsWith('char_')))return;
+  ensureBotsCacheForWorkerSubscribed();
+  if(!_botsCacheForWorker)return;
+  const bot=Object.values(_botsCacheForWorker).find(b=>b&&b.uid===authorUid);
+  if(!bot||!bot.runtimeCode)return;
+  fetch(BOT_WORKER_URL,{
+    method:'POST',
+    headers:{'Content-Type':'application/json','x-worker-secret':BOT_WORKER_SECRET},
+    body:JSON.stringify({botId:bot.uid,channelId,type:'reaction',msgId,emoji,uid,added})
+  }).then(r=>r.text()).then(t=>console.log('[bot worker] reacción respuesta:',t))
+    .catch(e=>console.warn('[bot worker] reaction notify failed',e));
+}
+
 function updateSlashCommandPanel(){
   const input=document.getElementById('msg-input');
   const panel=document.getElementById('slash-cmd-panel');
@@ -10628,7 +10683,13 @@ async function handleChatFileUpload(input){
   const msg={id:'msg'+genId(12),uid:u.uid,name:u.name,color:u.nameColor||'',roleColor:_rc,avatarUrl:u.avatarUrl||'',content:'',
     fileName:file.name,fileSize:file.size,fileType:file.type||'',ts:Date.now(),reactions:[],pinned:false};
   if(url){
-    msg.fileUrl=url;
+    // Imágenes (incluye GIF, que es image/gif) y videos se guardan aparte
+    // de fileUrl para que se rendericen embebidos (mediaHtml) en vez de
+    // como una tarjeta de "descargar archivo" genérica.
+    const mime=file.type||'';
+    if(mime.startsWith('image/'))msg.imageUrl=url;
+    else if(mime.startsWith('video/'))msg.videoUrl=url;
+    else msg.fileUrl=url;
   } else {
     showToast(t("⚠️ Couldn't upload to Supabase Storage. Check your configuration. The file wasn't saved."));
     return;
@@ -10967,20 +11028,29 @@ document.addEventListener('paste',e=>{
   if(!imageItem)return;
   e.preventDefault();
   const file=imageItem.getAsFile();if(!file)return;
-  compressImage(file,800,800,400,async b64=>{
-    const u=state.currentUser;
-    const isDM=!!state.currentDmUid;
-    const _rc=isDM?'':getRoleColorForUserInServer(u.uid,state.currentServerId);
-    const url=await uploadToSupabaseStorage(b64,'chat-images');
-    const msg={id:'msg'+genId(12),uid:u.uid,name:u.name,color:u.nameColor||'',roleColor:_rc,avatarUrl:u.avatarUrl||'',content:'',ts:Date.now(),reactions:[],pinned:false,channelId:state.currentChannelId};
-    if(url){
-      msg.imageUrl=url;
-    } else {
-      showToast(t("⚠️ Couldn't upload the pasted image (check your Supabase Storage configuration)"));
-      return;
-    }
-    sendMsg(msg);showToast(t("<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\"/><circle cx=\"8.5\" cy=\"8.5\" r=\"1.5\"/><polyline points=\"21 15 16 10 5 21\"/></svg> Imagen pegada"));
-  });
+  // Mismo mecanismo que las imágenes cargadas desde dispositivo
+  // (handleChatImageUpload): queda en preview y hay que apretar enviar, en
+  // vez de mandarse sola apenas termina de subir.
+  const bar=document.getElementById('pending-img-bar');
+  const prev=document.getElementById('pending-img-preview');
+  if(bar)bar.style.display='flex';
+  if(prev)prev.style.opacity='.4';
+  compressImage(file,800,800,400,b64=>{
+    if(prev){prev.src=b64;prev.style.opacity='.55';}
+    if(bar)bar.style.display='flex';
+    document.getElementById('msg-input')?.focus();
+    state._pendingImageUploading=true;
+    uploadToSupabaseStorage(b64,'chat-images').then(url=>{
+      state._pendingImageUploading=false;
+      if(url){
+        state._pendingImageUrl=url;
+        if(prev)prev.style.opacity='1';
+      } else {
+        showToast(t("⚠️ Couldn't upload the pasted image (check your Supabase Storage configuration)"));
+        cancelPendingImage();
+      }
+    });
+  },()=>{ if(bar)bar.style.display='none'; });
 });
 
 // ── AUTO STATUS ──
