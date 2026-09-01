@@ -5585,7 +5585,8 @@ function buildMemberEl(m,isOnline){
   }
   const nameFont=(live&&live.nameFont!==undefined)?live.nameFont:m.nameFont;
   const nameStyle=`color:${isOnline?(roleColor||'var(--text-1)'):'var(--text-3)'};${nameFont?`font-family:${nameFont};`:''}`;
-  div.innerHTML=`<div class="member-avatar-wrap"><div class="member-avatar" style="background:${bg};${avatarRingStyle}">${avatarC}</div>${decoImgHtml}<div class="member-status" style="background:${statusColor}"></div></div><div class="member-info"><div class="member-name" style="${nameStyle}">${m.nickname?escapeHtml(m.nickname):((live&&live.name)||m.name||'?')}${uid===state.currentUser.uid?` <span style="font-size:.65rem;color:var(--accent);">(${currentLang==='en'?'you':'tú'})</span>`:''}${botBadgeHtml}${plusBadgeHtml}${storeBadgeHtml}</div>${activityHtml}</div>`;
+  const botTagHtml=(isBot&&m.tag)?`<div style="font-size:.65rem;color:var(--text-3);font-family:monospace;">${escapeHtml(m.tag)}</div>`:'';
+  div.innerHTML=`<div class="member-avatar-wrap"><div class="member-avatar" style="background:${bg};${avatarRingStyle}">${avatarC}</div>${decoImgHtml}<div class="member-status" style="background:${statusColor}"></div></div><div class="member-info"><div class="member-name" style="${nameStyle}">${m.nickname?escapeHtml(m.nickname):((live&&live.name)||m.name||'?')}${uid===state.currentUser.uid?` <span style="font-size:.65rem;color:var(--accent);">(${currentLang==='en'?'you':'tú'})</span>`:''}${botBadgeHtml}${plusBadgeHtml}${storeBadgeHtml}</div>${botTagHtml}${activityHtml}</div>`;
   div.onclick=e=>{ isBot?showProfilePopup(e,uid):showProfilePopupByUid(e,uid,m); e.stopPropagation(); };
   return div;
 }
@@ -8272,6 +8273,7 @@ function showBotProfilePopup(event,botInfo){
         <span style="font-size:1rem;font-weight:700;color:var(--text-0);">${botInfo.name||'Bot'}</span>
         <span style="background:var(--accent);color:#fff;font-size:.55rem;font-weight:700;border-radius:4px;padding:1px 5px;">BOT</span>
       </div>
+      ${botInfo.tag?`<div style="font-size:.72rem;color:var(--text-3);font-family:monospace;">${botInfo.tag}</div>`:''}
       <div style="margin-top:4px;font-size:.78rem;color:var(--text-2);line-height:1.4;">${botInfo.description||'Bot de Communiter.'}</div>
       ${commandsHtml?`<div style="margin-top:10px;font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--text-3);letter-spacing:.05em;margin-bottom:6px;">Comandos</div>${commandsHtml}`:''}
     </div>`;
